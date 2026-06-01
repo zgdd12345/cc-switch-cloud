@@ -14,8 +14,8 @@
 //! 2. **误删用户文件**：`reconcile()` 只对数据库中存在的命令名进行操作，
 //!    **绝不枚举目录再删除未知文件**。用户自己放进去的 `.md` 因此天然不受影响。
 //!
-//! 注：服务方法目前由后续 Tauri 命令层消费，暂时整体 `allow(dead_code)`。
-#![allow(dead_code)]
+//! 所有公共方法均已通过 Tauri 命令层（commands/command.rs）消费，
+//! 唯一例外是 `reconcile`，计划在 increment 3 中作为启动时协调调用使用。
 
 use std::fs;
 use std::path::PathBuf;
@@ -207,6 +207,9 @@ impl CommandService {
     /// **SAFE 契约**：只遍历数据库中的命令——启用则写文件、禁用则删其文件。
     /// **绝不**枚举目录后删除未知文件，因此用户自己放进 commands 目录的 `.md`
     /// 文件天然不受影响。
+    ///
+    /// TODO(increment 3)：在 app setup 启动时调用，以确保磁盘与 DB 一致。
+    #[allow(dead_code)]
     pub fn reconcile(&self) -> Result<(), AppError> {
         let commands = self.db.get_all_installed_commands()?;
         for command in &commands {

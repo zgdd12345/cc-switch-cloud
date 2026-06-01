@@ -52,6 +52,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    command::CommandService,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -874,6 +875,15 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
+            // 初始化 CommandService
+            {
+                let db = app.state::<AppState>().db.clone();
+                let command_service = CommandService::new(db);
+                app.manage(commands::command::CommandServiceState(Arc::new(
+                    command_service,
+                )));
+            }
+
             // 初始化 CopilotAuthManager
             {
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
@@ -1232,6 +1242,14 @@ pub fn run() {
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
+            // Command management
+            commands::get_installed_commands,
+            commands::create_command,
+            commands::update_command,
+            commands::delete_command,
+            commands::set_command_enabled,
+            commands::scan_unmanaged_commands,
+            commands::import_commands_from_disk,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
