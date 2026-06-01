@@ -2,6 +2,7 @@
 //!
 //! Database access operations for each domain
 
+pub mod commands;
 pub mod failover;
 pub mod mcp;
 pub mod prompts;
