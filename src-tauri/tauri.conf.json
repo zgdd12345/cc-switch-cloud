@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CC Switch",
+  "productName": "AgentHub",
   "version": "3.16.0",
-  "identifier": "com.ccswitch.desktop",
+  "identifier": "dev.agenthub.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -56,7 +56,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": ["agenthub"]
       }
     },
     "updater": {
