@@ -711,7 +711,10 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
         }
         "open_website" => {
-            if let Err(e) = app.opener().open_url("https://github.com/zgdd12345/cc-switch-cloud", None::<String>) {
+            if let Err(e) = app.opener().open_url(
+                "https://github.com/zgdd12345/cc-switch-cloud",
+                None::<String>,
+            ) {
                 log::error!("打开官方网站失败: {e}");
             }
         }
