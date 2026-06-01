@@ -43,7 +43,6 @@ pub fn get_claude_config_dir() -> PathBuf {
 }
 
 /// Claude 斜杠命令目录 (~/.claude/commands)
-#[allow(dead_code)] // 由后续 Tauri 命令层消费
 pub fn get_commands_dir() -> PathBuf {
     get_claude_config_dir().join("commands")
 }
