@@ -30,3 +30,6 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+
+# local machine cargo workaround (cc PATH hijack) — do not commit
+.cargo/
