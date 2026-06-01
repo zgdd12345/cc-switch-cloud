@@ -26,6 +26,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Terminal,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -89,6 +90,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import CommandsPanel from "@/components/commands/CommandsPanel";
 
 type View =
   | "providers"
@@ -104,7 +106,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "commands";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -150,6 +153,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "commands",
 ];
 
 const getInitialView = (): View => {
@@ -244,6 +248,7 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  const commandsPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -276,6 +281,7 @@ function App() {
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasCommandsSupport = sharedFeatureApp === "claude";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -915,6 +921,10 @@ function App() {
           return <ToolsPanel />;
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
+        case "commands":
+          return (
+            <CommandsPanel ref={commandsPanelRef} currentApp="claude" />
+          );
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -1137,6 +1147,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "commands" && t("commands.title")}
                 </h1>
               </div>
             ) : (
@@ -1218,6 +1229,17 @@ function App() {
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
               >
+                {currentView === "commands" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => commandsPanelRef.current?.openCreate()}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("commands.create")}
+                  </Button>
+                )}
                 {currentView === "prompts" && (
                   <Button
                     variant="ghost"
@@ -1447,6 +1469,21 @@ function App() {
                                 title={t("skills.manage")}
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("commands")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasCommandsSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("commands.manage")}
+                              >
+                                <Terminal className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

@@ -2667,5 +2667,32 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "commands": {
+    "title": "Commands Management",
+    "manage": "Commands",
+    "create": "New Command",
+    "edit": "Edit Command",
+    "delete": "Delete Command",
+    "deleteConfirm": "Delete Command",
+    "deleteConfirmDescription": "Are you sure you want to delete \"/{{name}}\"? This action cannot be undone.",
+    "empty": "No commands",
+    "emptyDescription": "Create Claude slash-commands to extend your workflow",
+    "count": "{{count}} command(s)",
+    "enable": "Enable",
+    "enabledClaude": "Enabled for Claude",
+    "name": "Command Name",
+    "namePlaceholder": "e.g. my-command",
+    "content": "Content",
+    "contentPlaceholder": "Enter the command content (Markdown / instructions)...",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional short description",
+    "tags": "Tags",
+    "tagsPlaceholder": "e.g. productivity, coding (comma-separated)",
+    "save": "Save",
+    "cancel": "Cancel",
+    "createSuccess": "Command /{{name}} created",
+    "deleteSuccess": "Command /{{name}} deleted",
+    "nameInvalid": "Name may only contain letters, digits, dots, hyphens and underscores"
   }
 }
