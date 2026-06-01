@@ -70,8 +70,6 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
   presetCategory?: ProviderCategory;
-  isPartner?: boolean;
-  partnerPromotionKey?: string;
   meta?: ProviderMeta;
   providerKey?: string;
   suggestedDefaults?: OpenClawSuggestedDefaults;
@@ -283,8 +281,6 @@ export function ClaudeDesktopProviderForm({
   const [activePreset, setActivePreset] = useState<{
     id: string;
     category?: ProviderCategory;
-    isPartner?: boolean;
-    partnerPromotionKey?: string;
     providerType?: string;
     requiresOAuth?: boolean;
   } | null>(null);
@@ -433,8 +429,6 @@ export function ClaudeDesktopProviderForm({
     setActivePreset({
       id: value,
       category: entry.preset.category,
-      isPartner: entry.preset.isPartner,
-      partnerPromotionKey: entry.preset.partnerPromotionKey,
       providerType: entry.preset.providerType,
       requiresOAuth: entry.preset.requiresOAuth,
     });
@@ -678,8 +672,6 @@ export function ClaudeDesktopProviderForm({
       meta,
       presetId: activePreset?.id,
       presetCategory: activePreset?.category,
-      isPartner: activePreset?.isPartner,
-      partnerPromotionKey: activePreset?.partnerPromotionKey,
     });
   };
 

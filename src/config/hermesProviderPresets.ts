@@ -103,8 +103,6 @@ export interface HermesProviderPreset {
   apiKeyUrl?: string;
   settingsConfig: HermesProviderSettingsConfig;
   isOfficial?: boolean;
-  isPartner?: boolean;
-  partnerPromotionKey?: string;
   category?: ProviderCategory;
   templateValues?: Record<string, TemplateValueConfig>;
   theme?: PresetTheme;
@@ -131,8 +129,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    websiteUrl: "https://www.shengsuanyun.com/",
+    apiKeyUrl: "https://www.shengsuanyun.com/",
     settingsConfig: {
       name: "shengsuanyun",
       base_url: "https://router.shengsuanyun.com/api/v1",
@@ -141,8 +139,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "openai/gpt-5.5", name: "GPT-5.5" }],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
     suggestedDefaults: {
       model: { default: "openai/gpt-5.5", provider: "shengsuanyun" },
@@ -151,9 +147,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan",
     settingsConfig: {
       name: "ark_agentplan",
       base_url: "https://ark.cn-beijing.volces.com/api/coding",
@@ -167,8 +163,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
     icon: "huoshan",
     iconColor: "#3370FF",
     suggestedDefaults: {
@@ -181,9 +175,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "BytePlus",
     websiteUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark",
     apiKeyUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark",
     settingsConfig: {
       name: "byteplus",
       base_url: "https://ark.ap-southeast.bytepluses.com/api/coding",
@@ -197,8 +191,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "byteplus",
     icon: "byteplus",
     iconColor: "#3370FF",
     suggestedDefaults: {
@@ -211,9 +203,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "DouBaoSeed",
     websiteUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D",
     apiKeyUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D",
     settingsConfig: {
       name: "doubao_seed",
       base_url: "https://ark.cn-beijing.volces.com/api/compatible",
@@ -227,8 +219,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "doubaoseed",
     icon: "doubao",
     iconColor: "#3370FF",
     suggestedDefaults: {
@@ -591,8 +581,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "minimax_cn",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
@@ -612,8 +600,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "minimax_en",
     theme: { backgroundColor: "#f64551", textColor: "#FFFFFF" },
     icon: "minimax",
     iconColor: "#FF6B6B",
@@ -671,8 +657,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "siliconflow",
     icon: "siliconflow",
     iconColor: "#6E29F6",
     suggestedDefaults: {
@@ -694,8 +678,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7" }],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "siliconflow",
     icon: "siliconflow",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -717,8 +699,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dmxapi",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "dmxapi" },
     },
@@ -726,7 +706,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    apiKeyUrl: "https://www.packyapi.com/register",
     settingsConfig: {
       name: "packycode",
       base_url: "https://www.packyapi.com",
@@ -739,8 +719,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "packycode",
     icon: "packycode",
     suggestedDefaults: {
       model: { default: "claude-opus-4-8", provider: "packycode" },
@@ -749,7 +727,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    apiKeyUrl: "https://apikey.fun/register",
     settingsConfig: {
       name: "apikeyfun",
       base_url: "https://api.apikey.fun",
@@ -774,8 +752,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "apikeyfun",
     icon: "apikeyfun",
     suggestedDefaults: {
       model: { default: "claude-opus-4-8", provider: "apikeyfun" },
@@ -784,10 +760,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com",
     settingsConfig: {
       name: "apinebula",
-      base_url: "https://apinebula.com/v1",
+      base_url: "https://apinebula.com",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -798,8 +774,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "apinebula",
     icon: "apinebula",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "apinebula" },
@@ -822,8 +796,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
     icon: "atlascloud",
     suggestedDefaults: {
       model: { default: "zai-org/glm-5.1", provider: "atlascloud" },
@@ -846,8 +818,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "sudocode" },
@@ -856,7 +826,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
-    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
+    apiKeyUrl: "https://cubence.com/signup",
     settingsConfig: {
       name: "cubence",
       base_url: "https://api.cubence.com",
@@ -869,8 +839,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "cubence",
     icon: "cubence",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -880,7 +848,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.top/register",
     settingsConfig: {
       name: "claudecn",
       base_url: "https://claudecn.top",
@@ -893,8 +861,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "claudecn",
     icon: "claudecn",
     templateValues: {
       apiKey: {
@@ -923,8 +889,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "runapi",
     icon: "runapi",
     templateValues: {
       apiKey: {
@@ -940,7 +904,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    apiKeyUrl: "https://aigocode.com",
     settingsConfig: {
       name: "aigocode",
       base_url: "https://api.aigocode.com",
@@ -953,8 +917,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
     suggestedDefaults: {
@@ -964,7 +926,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "RightCode",
     websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    apiKeyUrl: "https://www.right.codes/register",
     settingsConfig: {
       name: "rightcode",
       base_url: "https://www.right.codes/claude",
@@ -977,8 +939,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "rightcode",
     icon: "rc",
     iconColor: "#E96B2C",
     suggestedDefaults: {
@@ -988,7 +948,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "AICodeMirror",
     websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    apiKeyUrl: "https://www.aicodemirror.com/register",
     settingsConfig: {
       name: "aicodemirror",
       base_url: "https://api.aicodemirror.com/api/claudecode",
@@ -1001,8 +961,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aicodemirror",
     icon: "aicodemirror",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1012,7 +970,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
-    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    apiKeyUrl: "https://www.crazyrouter.com/register",
     settingsConfig: {
       name: "crazyrouter",
       base_url: "https://cn.crazyrouter.com",
@@ -1025,8 +983,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "crazyrouter",
     icon: "crazyrouter",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1036,7 +992,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "SSSAiCode",
     websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    apiKeyUrl: "https://www.sssaicode.com/register",
     settingsConfig: {
       name: "sssaicode",
       base_url: "https://node-hk.sssaicode.com/api",
@@ -1049,8 +1005,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1062,7 +1016,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     nameKey: "providerForm.presets.ucloud",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
-      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "https://www.compshare.cn/coding-plan",
     settingsConfig: {
       name: "compshare",
       base_url: "https://api.modelverse.cn/v1",
@@ -1071,8 +1025,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "ucloud",
     icon: "ucloud",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1084,7 +1036,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     nameKey: "providerForm.presets.ucloudCoding",
     websiteUrl: "https://www.compshare.cn",
     apiKeyUrl:
-      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+      "https://www.compshare.cn/coding-plan",
     settingsConfig: {
       name: "compshare_coding",
       base_url: "https://cp.compshare.cn/v1",
@@ -1093,8 +1045,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "ucloud",
     icon: "ucloud",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1104,7 +1054,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Micu",
     websiteUrl: "https://www.micuapi.ai",
-    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    apiKeyUrl: "https://www.micuapi.ai/register",
     settingsConfig: {
       name: "micu",
       base_url: "https://www.micuapi.ai",
@@ -1117,8 +1067,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "micu",
     icon: "micu",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1141,8 +1089,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "ctok",
     icon: "ctok",
     iconColor: "#000000",
     suggestedDefaults: {
@@ -1174,7 +1120,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "LemonData",
     websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    apiKeyUrl: "https://lemondata.cc",
     settingsConfig: {
       name: "lemondata",
       base_url: "https://api.lemondata.cc/v1",
@@ -1183,8 +1129,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
     icon: "lemondata",
     suggestedDefaults: {
       model: { default: "gpt-5.5", provider: "lemondata" },
@@ -1252,7 +1196,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
-    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    apiKeyUrl: "https://code.pipellm.ai/login",
     settingsConfig: {
       name: "pipellm",
       base_url: "https://cc-api.pipellm.ai",

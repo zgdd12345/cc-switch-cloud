@@ -1047,10 +1047,6 @@ fn sync_gemini_google_official_sets_oauth_security() {
             }),
             Some("https://ai.google.dev".to_string()),
         );
-        provider.meta = Some(ProviderMeta {
-            partner_promotion_key: Some("google-official".to_string()),
-            ..ProviderMeta::default()
-        });
         manager
             .providers
             .insert("google-official".to_string(), provider);
