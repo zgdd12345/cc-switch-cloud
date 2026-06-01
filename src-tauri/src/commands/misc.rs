@@ -56,7 +56,7 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
     handle
         .opener()
         .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
+            "https://github.com/zgdd12345/cc-switch-cloud/releases/latest",
             None::<String>,
         )
         .map_err(|e| format!("打开更新页面失败: {e}"))?;
@@ -230,7 +230,7 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
     use std::process::Command;
 
     let bat_file =
-        std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
+        std::env::temp_dir().join(format!("agenthub_{}_{}.bat", label, std::process::id()));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let output = Command::new("cmd")
@@ -921,7 +921,7 @@ async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Op
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     match client
         .get(&url)
-        .header("User-Agent", "cc-switch")
+        .header("User-Agent", "agenthub")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
@@ -2052,7 +2052,7 @@ fn package_manager_anchored_command_from_paths(
 /// 已展示给用户"将写回原生那处"——欺骗性故障。
 ///
 /// 判定顺序（命中即返回）：
-/// ① Hermes → `<bin_path 绝对> update`;Hermes CLI 自己知道安装环境,避免 cc-switch
+/// ① Hermes → `<bin_path 绝对> update`;Hermes CLI 自己知道安装环境,避免 agenthub
 ///    猜系统 `python3`/`python` 时撞上 Python 版本或 pyenv shim 问题。
 /// ② Claude 原生安装器（`~/.local/share/claude/versions/`）→ `<bin_path 绝对> update`；
 ///    bin_path 指向 launcher,launcher 内部 dispatch update 子命令。它不归 npm 管,
@@ -2569,7 +2569,7 @@ fn launch_macos_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
     let terminal = preferred.as_deref().unwrap_or("terminal");
 
     let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let script_file = temp_dir.join(format!("agenthub_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
@@ -2849,7 +2849,7 @@ fn launch_linux_terminal(config_file: &std::path::Path, cwd: Option<&Path>) -> R
 
     // Create temp script file
     let temp_dir = std::env::temp_dir();
-    let script_file = temp_dir.join(format!("cc_switch_launcher_{}.sh", std::process::id()));
+    let script_file = temp_dir.join(format!("agenthub_launcher_{}.sh", std::process::id()));
     let config_path = config_file.to_string_lossy();
     let cd_command = build_shell_cd_command(cwd);
 
@@ -2948,7 +2948,7 @@ fn launch_windows_terminal(
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
-    let bat_file = temp_dir.join(format!("cc_switch_claude_{}.bat", std::process::id()));
+    let bat_file = temp_dir.join(format!("agenthub_claude_{}.bat", std::process::id()));
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
@@ -3083,15 +3083,15 @@ pub(crate) fn launch_terminal_running(command_line: &str, label: &str) -> Result
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (script_file, script_content) = {
-        let file = temp_dir.join(format!("cc_switch_{}_{}.sh", label, pid));
+        let file = temp_dir.join(format!("agenthub_{}_{}.sh", label, pid));
         let content = format!(
             r#"#!/bin/bash
 trap 'rm -f "{script_path}"' EXIT
-echo "[cc-switch] Starting: {label}"
+echo "[agenthub] Starting: {label}"
 echo ""
 {cmd}
 echo ""
-echo "[cc-switch] Command exited. Press any key to close."
+echo "[agenthub] Command exited. Press any key to close."
 read -n 1 -s
 "#,
             script_path = file.display(),
@@ -3209,9 +3209,9 @@ read -n 1 -s
         let preferred = crate::settings::get_preferred_terminal();
         let terminal = preferred.as_deref().unwrap_or("cmd");
 
-        let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
+        let bat_file = temp_dir.join(format!("agenthub_{}_{}.bat", label, pid));
         let content = format!(
-            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            "@echo off\r\necho [agenthub] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [agenthub] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
             label = label,
             cmd = command_line,
         );
@@ -4097,7 +4097,7 @@ mod tests {
 
         #[test]
         fn hermes_uses_cli_update_anchor() {
-            // Hermes 自带 `hermes update`;锚定到命令行默认那处 CLI,避免 cc-switch 猜
+            // Hermes 自带 `hermes update`;锚定到命令行默认那处 CLI,避免 agenthub 猜
             // 系统 Python/pip 时撞上 Python >=3.11 或 pyenv shim 问题。
             let cmd = anchored_command_from_paths(
                 "hermes",
@@ -4401,7 +4401,7 @@ mod tests {
 
         #[test]
         fn hermes_install_uses_official_installer() {
-            // Hermes 官方 installer 会处理 Python 3.11+/uv 等运行时;不要再从 cc-switch
+            // Hermes 官方 installer 会处理 Python 3.11+/uv 等运行时;不要再从 agenthub
             // 里走 `python3 || python` pip 链。
             let cmd = install_command_for("hermes");
             assert!(
@@ -4641,7 +4641,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock should be after epoch")
             .as_nanos();
-        let missing = std::env::temp_dir().join(format!("cc-switch-missing-{unique}"));
+        let missing = std::env::temp_dir().join(format!("agenthub-missing-{unique}"));
 
         let error = resolve_launch_cwd(Some(missing.to_string_lossy().into_owned()))
             .expect_err("missing directory should fail");
@@ -4659,7 +4659,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_cold_start_avoids_current_window_before_one_exists() {
-        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/agenthub_launcher.sh"));
 
         let cold_start_branch = script
             .split("else\n        activate")
@@ -4678,7 +4678,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn iterm2_applescript_keeps_new_tab_behavior_for_existing_windows() {
-        let script = build_macos_iterm2_applescript(Path::new("/tmp/cc_switch_launcher.sh"));
+        let script = build_macos_iterm2_applescript(Path::new("/tmp/agenthub_launcher.sh"));
 
         let running_branch = script
             .split("if was_running then")

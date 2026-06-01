@@ -172,7 +172,7 @@ impl Database {
         Err(AppError::localized(
             "backup.sql.invalid_format",
             "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
-            "Only SQL backups exported by CC Switch are supported.",
+            "Only SQL backups exported by AgentHub are supported.",
         ))
     }
 
@@ -296,7 +296,7 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let db_path = get_app_config_dir().join("cc-switch.db");
+        let db_path = get_app_config_dir().join("agenthub.db");
         if !db_path.exists() {
             return Ok(None);
         }

@@ -1,7 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入国际化配置
 import i18n from "./i18n";
@@ -39,7 +38,7 @@ interface ConfigLoadErrorPayload {
 async function handleConfigLoadError(
   payload: ConfigLoadErrorPayload | null,
 ): Promise<void> {
-  const path = payload?.path ?? "~/.cc-switch/config.json";
+  const path = payload?.path ?? "~/.agenthub/config.json";
   const detail = payload?.error ?? "Unknown error";
 
   await message(
@@ -90,10 +89,8 @@ async function bootstrap() {
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
-          <UpdateProvider>
-            <App />
-            <Toaster />
-          </UpdateProvider>
+          <App />
+          <Toaster />
         </ThemeProvider>
       </QueryClientProvider>
     </React.StrictMode>,

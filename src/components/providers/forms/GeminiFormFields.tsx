@@ -26,8 +26,6 @@ interface GeminiFormFieldsProps {
   category?: ProviderCategory;
   shouldShowApiKeyLink: boolean;
   websiteUrl: string;
-  isPartner?: boolean;
-  partnerPromotionKey?: string;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -56,8 +54,6 @@ export function GeminiFormFields({
   category,
   shouldShowApiKeyLink,
   websiteUrl,
-  isPartner,
-  partnerPromotionKey,
   shouldShowSpeedTest,
   baseUrl,
   onBaseUrlChange,
@@ -103,9 +99,8 @@ export function GeminiFormFields({
       .finally(() => setIsFetchingModels(false));
   }, [baseUrl, apiKey, t]);
 
-  // 检测是否为 Google 官方（使用 OAuth）
-  const isGoogleOfficial =
-    partnerPromotionKey?.toLowerCase() === "google-official";
+  // 检测是否为 Google 官方（使用 OAuth）：category 为 "official" 即 Google Official
+  const isGoogleOfficial = category === "official";
 
   return (
     <>
@@ -139,8 +134,6 @@ export function GeminiFormFields({
           category={category}
           shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
-          isPartner={isPartner}
-          partnerPromotionKey={partnerPromotionKey}
         />
       )}
 

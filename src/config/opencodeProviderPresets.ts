@@ -8,8 +8,6 @@ export interface OpenCodeProviderPreset {
   apiKeyUrl?: string;
   settingsConfig: OpenCodeProviderConfig;
   isOfficial?: boolean;
-  isPartner?: boolean;
-  partnerPromotionKey?: string;
   category?: ProviderCategory;
   templateValues?: Record<string, TemplateValueConfig>;
   theme?: PresetTheme;
@@ -281,8 +279,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    websiteUrl: "https://www.shengsuanyun.com/",
+    apiKeyUrl: "https://www.shengsuanyun.com/",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Shengsuanyun",
@@ -297,8 +295,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
     templateValues: {
       apiKey: {
@@ -311,9 +307,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "火山Agentplan",
@@ -329,8 +325,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
     icon: "huoshan",
     iconColor: "#3370FF",
     templateValues: {
@@ -344,9 +338,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "BytePlus",
     websiteUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark",
     apiKeyUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "BytePlus",
@@ -362,8 +356,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "byteplus",
     icon: "byteplus",
     iconColor: "#3370FF",
     templateValues: {
@@ -377,9 +369,9 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "DouBaoSeed",
     websiteUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D",
     apiKeyUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "DouBaoSeed",
@@ -395,8 +387,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "doubaoseed",
     icon: "doubao",
     iconColor: "#3370FF",
     templateValues: {
@@ -815,8 +805,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "minimax_cn",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -848,8 +836,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
-    isPartner: true,
-    partnerPromotionKey: "minimax_en",
     theme: {
       backgroundColor: "#f64551",
       textColor: "#FFFFFF",
@@ -1007,8 +993,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dmxapi",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1133,7 +1117,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "PIPELLM",
     websiteUrl: "https://code.pipellm.ai",
-    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    apiKeyUrl: "https://code.pipellm.ai/login",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "PIPELLM",
@@ -1162,7 +1146,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    apiKeyUrl: "https://www.packyapi.com/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "PackyCode",
@@ -1177,8 +1161,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "packycode",
     icon: "packycode",
     templateValues: {
       apiKey: {
@@ -1191,7 +1173,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "APIKEY.FUN",
     websiteUrl: "https://apikey.fun",
-    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    apiKeyUrl: "https://apikey.fun/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "APIKEY.FUN",
@@ -1207,8 +1189,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "apikeyfun",
     icon: "apikeyfun",
     templateValues: {
       apiKey: {
@@ -1221,12 +1201,12 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com",
     settingsConfig: {
       npm: "@ai-sdk/openai",
       name: "APINebula",
       options: {
-        baseURL: "https://apinebula.com/v1",
+        baseURL: "https://apinebula.com",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1235,8 +1215,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "apinebula",
     icon: "apinebula",
     templateValues: {
       apiKey: {
@@ -1263,8 +1241,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "atlascloud",
     icon: "atlascloud",
     templateValues: {
       apiKey: {
@@ -1291,8 +1267,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     templateValues: {
       apiKey: {
@@ -1305,7 +1279,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
-    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
+    apiKeyUrl: "https://cubence.com/signup",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Cubence",
@@ -1320,8 +1294,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "cubence",
     icon: "cubence",
     iconColor: "#000000",
     templateValues: {
@@ -1335,7 +1307,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    apiKeyUrl: "https://aigocode.com",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AIGoCode",
@@ -1350,8 +1322,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
     templateValues: {
@@ -1365,7 +1335,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "RightCode",
     websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    apiKeyUrl: "https://www.right.codes/register",
     settingsConfig: {
       npm: "@ai-sdk/openai",
       name: "RightCode",
@@ -1379,8 +1349,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "rightcode",
     icon: "rc",
     iconColor: "#E96B2C",
     templateValues: {
@@ -1394,7 +1362,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "AICodeMirror",
     websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    apiKeyUrl: "https://www.aicodemirror.com/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICodeMirror",
@@ -1409,8 +1377,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "aicodemirror",
     icon: "aicodemirror",
     iconColor: "#000000",
     templateValues: {
@@ -1424,7 +1390,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.top/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "ClaudeCN",
@@ -1440,8 +1406,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "claudecn",
     icon: "claudecn",
     templateValues: {
       apiKey: {
@@ -1470,8 +1434,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "runapi",
     icon: "runapi",
     templateValues: {
       apiKey: {
@@ -1484,7 +1446,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "CrazyRouter",
     websiteUrl: "https://www.crazyrouter.com",
-    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    apiKeyUrl: "https://www.crazyrouter.com/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "CrazyRouter",
@@ -1499,8 +1461,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "crazyrouter",
     icon: "crazyrouter",
     iconColor: "#000000",
     templateValues: {
@@ -1514,7 +1474,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "SSSAiCode",
     websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    apiKeyUrl: "https://www.sssaicode.com/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "SSSAiCode",
@@ -1529,8 +1489,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sssaicode",
     icon: "sssaicode",
     iconColor: "#000000",
     templateValues: {
@@ -1544,7 +1502,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "Micu",
     websiteUrl: "https://www.micuapi.ai",
-    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    apiKeyUrl: "https://www.micuapi.ai/register",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "Micu",
@@ -1559,8 +1517,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "micu",
     icon: "micu",
     iconColor: "#000000",
     templateValues: {
@@ -1589,8 +1545,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "ctok",
     icon: "ctok",
     iconColor: "#000000",
     templateValues: {
@@ -1634,7 +1588,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "LemonData",
     websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
+    apiKeyUrl: "https://lemondata.cc",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "LemonData",
@@ -1648,8 +1602,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
     icon: "lemondata",
     templateValues: {
       apiKey: {
