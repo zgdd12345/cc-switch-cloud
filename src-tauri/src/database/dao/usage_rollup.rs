@@ -340,8 +340,14 @@ mod tests {
 
         {
             let conn = crate::database::lock_conn!(db.conn);
+            // Production buckets logs by LOCAL date (see do_rollup_and_prune:
+            // `date(l.created_at, 'unixepoch', 'localtime')`), so the seeded
+            // rollup row must use the local date too — otherwise on times where
+            // the UTC date differs from the local date the LEFT JOIN misses and
+            // the merge produces a separate row (date/timezone-flaky test).
             let date_str = chrono::DateTime::from_timestamp(old_ts, 0)
                 .unwrap()
+                .with_timezone(&chrono::Local)
                 .format("%Y-%m-%d")
                 .to_string();
             conn.execute(
