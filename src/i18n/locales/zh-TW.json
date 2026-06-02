@@ -2700,6 +2700,11 @@
     "save": "儲存",
     "skills": "技能",
     "skillsPlaceholder": "例如：my-skill（逗號分隔）",
-    "updateSuccess": "設定檔「{{name}}」已更新"
+    "updateSuccess": "設定檔「{{name}}」已更新",
+    "dotfilesSection": "設定檔案（Dotfiles）",
+    "settingsFragment": "settings.json 片段",
+    "settingsFragmentHint": "此 JSON 片段將深度合併到供應商設定之上",
+    "statusline": "statusline.sh",
+    "statuslineHint": "當此設定檔處於使用中狀態時，將此 Shell 腳本渲染到終端機狀態列"
   }
 }

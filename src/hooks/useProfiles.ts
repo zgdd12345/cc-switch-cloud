@@ -152,10 +152,57 @@ export function useDeactivateProfile() {
   });
 }
 
+/** Query all dotfiles for a given profile */
+export function useProfileDotfiles(id: string | undefined) {
+  return useQuery({
+    queryKey: ["profiles", "dotfiles", id],
+    queryFn: () => profilesApi.getDotfiles(id!),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+    enabled: Boolean(id),
+  });
+}
+
+/** Upsert a dotfile for a profile */
+export function useSetProfileDotfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      relPath,
+      content,
+    }: {
+      id: string;
+      relPath: string;
+      content: string;
+    }) => profilesApi.setDotfile(id, relPath, content),
+    onSuccess: (_result, vars) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["profiles", "dotfiles", vars.id],
+      });
+    },
+  });
+}
+
+/** Delete a dotfile for a profile */
+export function useDeleteProfileDotfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, relPath }: { id: string; relPath: string }) =>
+      profilesApi.deleteDotfile(id, relPath),
+    onSuccess: (_result, vars) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["profiles", "dotfiles", vars.id],
+      });
+    },
+  });
+}
+
 // ========== re-exports ==========
 
 export type {
   InstalledProfile,
   ProfileSpec,
+  ProfileDotfile,
   ActivateProfileResult,
 } from "@/lib/api/profiles";

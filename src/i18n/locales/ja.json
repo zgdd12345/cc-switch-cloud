@@ -2755,6 +2755,11 @@
     "save": "保存",
     "skills": "スキル",
     "skillsPlaceholder": "例：my-skill（カンマ区切り）",
-    "updateSuccess": "プロファイル「{{name}}」を更新しました"
+    "updateSuccess": "プロファイル「{{name}}」を更新しました",
+    "dotfilesSection": "ドットファイル",
+    "settingsFragment": "settings.json フラグメント",
+    "settingsFragmentHint": "プロバイダー設定にディープマージされる JSON フラグメント",
+    "statusline": "statusline.sh",
+    "statuslineHint": "このプロファイルがアクティブな間、ターミナルのステータスラインに表示されるシェルスクリプト"
   }
 }

@@ -2755,6 +2755,11 @@
     "save": "Save",
     "skills": "Skills",
     "skillsPlaceholder": "e.g. my-skill (comma-separated)",
-    "updateSuccess": "Profile \"{{name}}\" updated"
+    "updateSuccess": "Profile \"{{name}}\" updated",
+    "dotfilesSection": "Dotfiles",
+    "settingsFragment": "settings.json fragment",
+    "settingsFragmentHint": "JSON fragment deep-merged on top of the provider settings",
+    "statusline": "statusline.sh",
+    "statuslineHint": "Shell script rendered into the terminal statusline when this profile is active"
   }
 }

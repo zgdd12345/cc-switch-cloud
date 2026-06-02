@@ -2755,6 +2755,11 @@
     "save": "保存",
     "skills": "技能",
     "skillsPlaceholder": "例如：my-skill（逗号分隔）",
-    "updateSuccess": "配置文件「{{name}}」已更新"
+    "updateSuccess": "配置文件「{{name}}」已更新",
+    "dotfilesSection": "配置文件（Dotfiles）",
+    "settingsFragment": "settings.json 片段",
+    "settingsFragmentHint": "此 JSON 片段将深度合并到供应商设置之上",
+    "statusline": "statusline.sh",
+    "statuslineHint": "当此配置文件处于激活状态时，将此 Shell 脚本渲染到终端状态栏"
   }
 }
