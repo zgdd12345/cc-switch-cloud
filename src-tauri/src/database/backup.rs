@@ -22,6 +22,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "provider_health",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "apply_manifest",
 ];
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
@@ -31,6 +32,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "apply_manifest",
 ];
 
 /// A database backup entry for the UI
@@ -689,10 +691,22 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{Database, SYNC_PRESERVE_TABLES, SYNC_SKIP_TABLES};
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
     use serial_test::serial;
+
+    #[test]
+    fn apply_manifest_is_classified_as_device_local() {
+        assert!(
+            SYNC_SKIP_TABLES.contains(&"apply_manifest"),
+            "apply_manifest should be skipped during WebDAV export"
+        );
+        assert!(
+            SYNC_PRESERVE_TABLES.contains(&"apply_manifest"),
+            "apply_manifest local data should be preserved during WebDAV import"
+        );
+    }
 
     #[test]
     fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
