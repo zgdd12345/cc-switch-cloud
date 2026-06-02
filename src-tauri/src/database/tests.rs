@@ -750,3 +750,16 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }
+
+#[test]
+fn fresh_db_has_commands_table() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='commands'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(n, 1, "commands table must exist on a fresh DB");
+    Ok(())
+}

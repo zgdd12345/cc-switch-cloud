@@ -103,7 +103,22 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 6. Skill Repos 表
+        // 6. Commands 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS commands (
+            id             TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            content        TEXT NOT NULL DEFAULT '',
+            description    TEXT,
+            tags           TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            installed_at   INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 7. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
@@ -113,14 +128,14 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 7. Settings 表
+        // 8. Settings 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Config 表（三行结构，app_type 主键）
+        // 9. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
             app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
@@ -171,7 +186,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
-        // 9. Provider Health 表
+        // 10. Provider Health 表
         conn.execute("CREATE TABLE IF NOT EXISTS provider_health (
             provider_id TEXT NOT NULL, app_type TEXT NOT NULL, is_healthy INTEGER NOT NULL DEFAULT 1,
             consecutive_failures INTEGER NOT NULL DEFAULT 0, last_success_at TEXT, last_failure_at TEXT,
@@ -180,7 +195,7 @@ impl Database {
             FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 10. Proxy Request Logs 表
+        // 11. Proxy Request Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
@@ -216,7 +231,7 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Self::create_request_logs_usage_indexes_if_supported(conn)?;
 
-        // 11. Model Pricing 表
+        // 12. Model Pricing 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_pricing (
             model_id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
@@ -228,7 +243,7 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 12. Stream Check Logs 表
+        // 13. Stream Check Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS stream_check_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, provider_name TEXT NOT NULL,
             app_type TEXT NOT NULL, status TEXT NOT NULL, success INTEGER NOT NULL, message TEXT NOT NULL,
@@ -430,6 +445,11 @@ impl Database {
                         log::info!("迁移数据库从 v9 到 v10（添加 Hermes Agent 支持）");
                         Self::migrate_v9_to_v10(conn)?;
                         Self::set_user_version(conn, 10)?;
+                    }
+                    10 => {
+                        log::info!("迁移数据库从 v10 到 v11（添加 commands 表）");
+                        Self::migrate_v10_to_v11(conn)?;
+                        Self::set_user_version(conn, 11)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1197,6 +1217,26 @@ impl Database {
         }
 
         log::info!("v9 -> v10 迁移完成：已添加 Hermes Agent 支持");
+        Ok(())
+    }
+
+    /// v10 -> v11 迁移：添加 commands 表
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS commands (
+            id             TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            content        TEXT NOT NULL DEFAULT '',
+            description    TEXT,
+            tags           TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            installed_at   INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("v10 -> v11 迁移完成：已添加 commands 表");
         Ok(())
     }
 

@@ -200,6 +200,28 @@ pub struct InstalledSkill {
     pub updated_at: i64,
 }
 
+/// 已安装的 Command（v0.4+ 统一结构）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledCommand {
+    /// 唯一标识符（格式："owner/repo:command" 或 "local:command"）
+    pub id: String,
+    /// 显示名称
+    pub name: String,
+    /// 命令内容（Markdown）
+    pub content: String,
+    /// 描述
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 标签列表（JSON 数组，存储为 TEXT）
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 是否在 Claude 中启用
+    pub enabled_claude: bool,
+    /// 安装时间（Unix 时间戳）
+    pub installed_at: i64,
+}
+
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

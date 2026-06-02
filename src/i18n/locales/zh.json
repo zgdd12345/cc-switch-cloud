@@ -2667,5 +2667,32 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "commands": {
+    "title": "命令管理",
+    "manage": "命令",
+    "create": "新建命令",
+    "edit": "编辑命令",
+    "delete": "删除命令",
+    "deleteConfirm": "删除命令",
+    "deleteConfirmDescription": "确定要删除 \"/{{name}}\" 吗？此操作无法撤销。",
+    "empty": "暂无命令",
+    "emptyDescription": "创建 Claude 斜杠命令以扩展工作流",
+    "count": "共 {{count}} 条命令",
+    "enable": "启用",
+    "enabledClaude": "已为 Claude 启用",
+    "name": "命令名称",
+    "namePlaceholder": "例如：my-command",
+    "content": "内容",
+    "contentPlaceholder": "输入命令内容（Markdown / 指令）……",
+    "description": "描述",
+    "descriptionPlaceholder": "可选简短描述",
+    "tags": "标签",
+    "tagsPlaceholder": "例如：效率,编程（逗号分隔）",
+    "save": "保存",
+    "cancel": "取消",
+    "createSuccess": "命令 /{{name}} 已创建",
+    "deleteSuccess": "命令 /{{name}} 已删除",
+    "nameInvalid": "名称只能包含字母、数字、点、连字符和下划线"
   }
 }
