@@ -116,6 +116,11 @@ export function useActivateProfile() {
       void queryClient.invalidateQueries({
         queryKey: ["profiles", "active", vars.app],
       });
+      // Invalidate the applied-files manifest so the Applied Files view reflects
+      // the newly activated profile's rendered dotfiles.
+      void queryClient.invalidateQueries({
+        queryKey: ["profiles", "manifest"],
+      });
       // Invalidate providers so current provider badge refreshes
       void queryClient.invalidateQueries({ queryKey: ["providers"] });
       // Invalidate the four content installed lists so badges + per-item toggles refresh
@@ -140,6 +145,11 @@ export function useDeactivateProfile() {
       });
       void queryClient.invalidateQueries({
         queryKey: ["profiles", "active", app],
+      });
+      // Invalidate the applied-files manifest so the Applied Files view reflects
+      // the cleared state after deactivation.
+      void queryClient.invalidateQueries({
+        queryKey: ["profiles", "manifest"],
       });
       void queryClient.invalidateQueries({ queryKey: ["providers"] });
       void queryClient.invalidateQueries({ queryKey: ["agents", "installed"] });

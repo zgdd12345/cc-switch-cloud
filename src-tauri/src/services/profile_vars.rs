@@ -79,6 +79,17 @@ pub fn build_var_map(
     let mut map: IndexMap<String, String> = IndexMap::new();
 
     // Layer 1: allowlisted process env (lowest precedence).
+    //
+    // CAVEAT: process-env values are read fresh on every call to `build_var_map`,
+    // which is invoked at both forward-render (activation) and backfill-strip
+    // (deactivation / re-render) time.  A settings.json fragment that splices an
+    // allowlisted process-env var (rather than `profile.spec.vars` or
+    // `provider.settings_config.env`, which are DB-stable) can therefore defeat
+    // the backfill re-render strip if the host environment changes between the
+    // earlier session's write and a later activation switch — the rendered value
+    // will differ from the stored one, so the strip pass may fail to match.
+    // Prefer `spec.vars` / `provider.env` for values that are spliced into
+    // settings.json fragments.
     for (k, v) in std::env::vars() {
         if ENV_ALLOWLIST_PREFIXES
             .iter()

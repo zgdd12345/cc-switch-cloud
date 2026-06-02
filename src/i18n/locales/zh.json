@@ -2762,7 +2762,7 @@
     "statusline": "statusline.sh",
     "statuslineHint": "当此配置文件处于激活状态时，将此 Shell 脚本渲染到终端状态栏",
     "variables": "变量",
-    "variablesHint": "当此配置文件激活时，以环境变量形式注入的键值对",
+    "variablesHint": "这些值将被替换到此配置文件的 settings.json / statusline 模板中的 ${VAR} 占位符处。",
     "varKey": "键",
     "varValue": "值",
     "addVar": "添加变量",

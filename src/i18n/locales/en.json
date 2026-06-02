@@ -2762,7 +2762,7 @@
     "statusline": "statusline.sh",
     "statuslineHint": "Shell script rendered into the terminal statusline when this profile is active",
     "variables": "Variables",
-    "variablesHint": "Key/value pairs injected as environment variables when this profile is active",
+    "variablesHint": "Values substituted into ${VAR} placeholders in this profile's settings.json / statusline templates.",
     "varKey": "Key",
     "varValue": "Value",
     "addVar": "Add Variable",
