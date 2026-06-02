@@ -43,6 +43,17 @@ vi.mock("@/hooks/useProfiles", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useProfileDotfiles: () => ({
+    data: [],
+  }),
+  useSetProfileDotfile: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({}),
+    isPending: false,
+  }),
+  useDeleteProfileDotfile: () => ({
+    mutateAsync: vi.fn().mockResolvedValue(true),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/lib/query/queries", () => ({

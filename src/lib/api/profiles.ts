@@ -27,6 +27,12 @@ export interface ActivateProfileResult {
   warnings: string[];
 }
 
+export interface ProfileDotfile {
+  profileId: string;
+  relPath: string;
+  content: string;
+}
+
 // ========== API ==========
 
 export const profilesApi = {
@@ -92,5 +98,20 @@ export const profilesApi = {
   /** Get the currently active profile for an app */
   async getActive(app: string): Promise<InstalledProfile | null> {
     return await invoke("get_active_profile", { app });
+  },
+
+  /** Get all dotfiles for a profile */
+  async getDotfiles(id: string): Promise<ProfileDotfile[]> {
+    return await invoke("get_profile_dotfiles", { id });
+  },
+
+  /** Set (upsert) a dotfile for a profile */
+  async setDotfile(id: string, relPath: string, content: string): Promise<void> {
+    await invoke("set_profile_dotfile", { id, relPath, content });
+  },
+
+  /** Delete a dotfile for a profile; returns true if it existed */
+  async deleteDotfile(id: string, relPath: string): Promise<boolean> {
+    return await invoke("delete_profile_dotfile", { id, relPath });
   },
 };
