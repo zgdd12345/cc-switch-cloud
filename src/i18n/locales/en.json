@@ -2132,7 +2132,31 @@
     "skillsFailedDescription": "Open the Skills page and click \"Import Existing\" to import manually (or restart and try again)."
   },
   "agents": {
-    "title": "Agents"
+    "title": "Agents",
+    "manage": "Agents",
+    "create": "New Agent",
+    "edit": "Edit Agent",
+    "delete": "Delete Agent",
+    "deleteConfirm": "Delete Agent",
+    "deleteConfirmDescription": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
+    "empty": "No agents",
+    "emptyDescription": "Create Claude agents to define autonomous task behaviour",
+    "count": "{{count}} agent(s)",
+    "enable": "Enable",
+    "enabledClaude": "Enabled for Claude",
+    "name": "Agent Name",
+    "namePlaceholder": "e.g. my-agent",
+    "content": "Content",
+    "contentPlaceholder": "Enter the agent instructions (Markdown / instructions)...",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional short description",
+    "tags": "Tags",
+    "tagsPlaceholder": "e.g. productivity, coding (comma-separated)",
+    "save": "Save",
+    "cancel": "Cancel",
+    "createSuccess": "Agent {{name}} created",
+    "deleteSuccess": "Agent {{name}} deleted",
+    "nameInvalid": "Name may only contain letters, digits, dots, hyphens and underscores"
   },
   "modelTest": {
     "testProvider": "Test model"

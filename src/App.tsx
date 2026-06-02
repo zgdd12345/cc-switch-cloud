@@ -13,6 +13,7 @@ import {
   Minimize2,
   X,
   Book,
+  Bot,
   Brain,
   Wrench,
   RefreshCw,
@@ -75,7 +76,7 @@ import { SkillsPage } from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
-import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import AgentsPanel from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
@@ -249,6 +250,7 @@ function App() {
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
   const commandsPanelRef = useRef<any>(null);
+  const agentsPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -282,6 +284,7 @@ function App() {
     useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
   const hasCommandsSupport = sharedFeatureApp === "claude";
+  const hasAgentsSupport = sharedFeatureApp === "claude";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -896,9 +899,7 @@ function App() {
             />
           );
         case "agents":
-          return (
-            <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
-          );
+          return <AgentsPanel ref={agentsPanelRef} />;
         case "universal":
           return (
             <div className="px-6 pt-4">
@@ -1240,6 +1241,17 @@ function App() {
                     {t("commands.create")}
                   </Button>
                 )}
+                {currentView === "agents" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => agentsPanelRef.current?.openCreate()}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("agents.create")}
+                  </Button>
+                )}
                 {currentView === "prompts" && (
                   <Button
                     variant="ghost"
@@ -1484,6 +1496,21 @@ function App() {
                                 title={t("commands.manage")}
                               >
                                 <Terminal className="flex-shrink-0 w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("agents")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasAgentsSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("agents.manage")}
+                              >
+                                <Bot className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

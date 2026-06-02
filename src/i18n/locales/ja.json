@@ -2132,7 +2132,31 @@
     "skillsFailedDescription": "Skills 画面で「既存をインポート」をクリックして手動でインポートしてください（または再起動して再試行）。"
   },
   "agents": {
-    "title": "エージェント"
+    "title": "エージェント",
+    "manage": "エージェント",
+    "create": "エージェントを作成",
+    "edit": "エージェントを編集",
+    "delete": "エージェントを削除",
+    "deleteConfirm": "エージェントを削除",
+    "deleteConfirmDescription": "\"{{name}}\" を削除してよろしいですか？この操作は元に戻せません。",
+    "empty": "エージェントがありません",
+    "emptyDescription": "Claude エージェントを作成して自律的なタスク動作を定義しましょう",
+    "count": "{{count}} 件のエージェント",
+    "enable": "有効化",
+    "enabledClaude": "Claude で有効",
+    "name": "エージェント名",
+    "namePlaceholder": "例：my-agent",
+    "content": "内容",
+    "contentPlaceholder": "エージェントの指示を入力してください（Markdown / 説明）……",
+    "description": "説明",
+    "descriptionPlaceholder": "任意の短い説明",
+    "tags": "タグ",
+    "tagsPlaceholder": "例：効率化,コーディング（カンマ区切り）",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "createSuccess": "エージェント {{name}} を作成しました",
+    "deleteSuccess": "エージェント {{name}} を削除しました",
+    "nameInvalid": "名前には英数字、ドット、ハイフン、アンダースコアのみ使用できます"
   },
   "modelTest": {
     "testProvider": "モデルテスト"
