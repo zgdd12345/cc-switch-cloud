@@ -114,6 +114,40 @@ fn json_deep_merge(target: &mut Value, source: &Value) {
     }
 }
 
+/// Prune from `fragment` (in place) every leaf/subtree that the provider's own
+/// `settings_config` sets to the IDENTICAL value. The result is the
+/// "fragment-exclusive" portion: keys that exist ONLY because of the profile
+/// fragment, not also because the provider owns them.
+///
+/// Used so the reverse-strip (json_deep_remove) only removes fragment-exclusive
+/// keys from the backfilled provider row, never a key the provider itself sets
+/// to the same value (which the plain subset-strip would otherwise drop).
+fn json_prune_provider_owned(fragment: &mut Value, provider: &Value) {
+    let (Some(frag_map), Some(prov_map)) = (fragment.as_object_mut(), provider.as_object()) else {
+        return;
+    };
+
+    let mut drop_keys: Vec<String> = Vec::new();
+    for (key, frag_value) in frag_map.iter_mut() {
+        let Some(prov_value) = prov_map.get(key) else {
+            continue;
+        };
+        if frag_value.is_object() && prov_value.is_object() {
+            json_prune_provider_owned(frag_value, prov_value);
+            if frag_value.as_object().is_some_and(|o| o.is_empty()) {
+                drop_keys.push(key.clone());
+            }
+        } else if frag_value == prov_value {
+            // Provider sets this key to the identical value -> it is provider-owned,
+            // keep it in the backfill by removing it from the strip set.
+            drop_keys.push(key.clone());
+        }
+    }
+    for key in drop_keys {
+        frag_map.remove(&key);
+    }
+}
+
 fn json_deep_remove(target: &mut Value, source: &Value) {
     let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
         return;
@@ -592,15 +626,18 @@ pub(crate) fn strip_common_config_from_live_settings(
     // bleeds into the provider's settings_config DB row. At backfill time the active
     // profile is still the OUTGOING one (set_active runs later in activate), which is
     // exactly the fragment currently merged onto disk — so stripping it here is correct.
-    // The provider-vs-fragment same-key collision edge (deep_remove may drop a key the
-    // provider also set to the same value) is identical to the pre-existing
-    // common-config strip behavior (remove_common_config_from_settings) and is accepted
-    // for parity.
+    //
+    // Provider-key durability: a plain subset-strip would drop a key the provider itself
+    // sets to the SAME value as the fragment (provider {env:{FOO:bar}} + fragment
+    // {env:{FOO:bar}} -> backfilled provider becomes {}). To preserve provider-owned keys
+    // we first prune from the fragment every leaf/subtree the provider also sets to the
+    // identical value, then strip only the remaining fragment-exclusive keys.
     if matches!(app_type, AppType::Claude) {
         match db.get_active_profile(app_type.as_str()) {
             Ok(Some(profile)) => match db.get_profile_dotfile(&profile.id, "settings.json") {
                 Ok(Some(df)) => {
-                    if let Ok(frag) = serde_json::from_str::<Value>(&df.content) {
+                    if let Ok(mut frag) = serde_json::from_str::<Value>(&df.content) {
+                        json_prune_provider_owned(&mut frag, &provider.settings_config);
                         json_deep_remove(&mut backfill_settings, &frag);
                     }
                 }
@@ -1575,6 +1612,55 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn prune_provider_owned_keeps_provider_keys_strips_fragment_exclusive() {
+        // Provider sets env.FOO=bar (and unrelated env.KEEP). Fragment shares the
+        // identical env.FOO=bar collision plus a fragment-exclusive statusLine subtree.
+        let provider = json!({
+            "env": { "FOO": "bar", "KEEP": "1" }
+        });
+        let mut fragment = json!({
+            "env": { "FOO": "bar" },
+            "statusLine": { "x": 1 }
+        });
+
+        json_prune_provider_owned(&mut fragment, &provider);
+
+        // The provider-owned collision (env.FOO=bar) is pruned out of the strip set,
+        // and the now-empty env object collapses; only fragment-exclusive keys remain.
+        assert_eq!(
+            fragment,
+            json!({ "statusLine": { "x": 1 } }),
+            "provider-owned key must be pruned from the strip fragment: {fragment}"
+        );
+
+        // Backfill behavior: stripping the pruned fragment leaves provider keys intact.
+        let mut backfill = json!({
+            "env": { "FOO": "bar", "KEEP": "1" },
+            "statusLine": { "x": 1 }
+        });
+        json_deep_remove(&mut backfill, &fragment);
+        assert_eq!(
+            backfill,
+            json!({ "env": { "FOO": "bar", "KEEP": "1" } }),
+            "provider-owned env.FOO must survive the reverse strip: {backfill}"
+        );
+    }
+
+    #[test]
+    fn prune_provider_owned_strips_when_value_differs() {
+        // Provider sets env.FOO=bar but fragment overrides it to env.FOO=baz.
+        // The fragment value differs -> it is fragment-exclusive -> NOT pruned.
+        let provider = json!({ "env": { "FOO": "bar" } });
+        let mut fragment = json!({ "env": { "FOO": "baz" } });
+        json_prune_provider_owned(&mut fragment, &provider);
+        assert_eq!(
+            fragment,
+            json!({ "env": { "FOO": "baz" } }),
+            "differing fragment value must remain in the strip set: {fragment}"
+        );
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {

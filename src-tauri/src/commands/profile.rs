@@ -142,8 +142,14 @@ pub fn activate_profile(
 }
 
 /// 取消激活指定 app 的当前 Profile（委托 ProfileService::deactivate）
+///
+/// 3b：deactivate 现执行确定性 teardown（拆除 whole-file dotfiles + 重建 settings.json），
+/// 返回非致命警告（与 activate 一致）。
 #[tauri::command]
-pub fn deactivate_profile(app: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn deactivate_profile(
+    app: String,
+    state: State<'_, AppState>,
+) -> Result<ActivateResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProfileService::deactivate(&state, app_type).map_err(|e| e.to_string())
 }

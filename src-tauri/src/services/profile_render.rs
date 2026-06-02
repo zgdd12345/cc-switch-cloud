@@ -8,11 +8,11 @@
 //! edited it) is left untouched and reported as a skip (`Ok(None)`).
 //!
 //! NOTE: These functions are the public renderer API consumed by the
-//! profile-apply orchestration (T5). Until that caller lands on this branch
-//! they have no non-test callers, and in this `staticlib`/`cdylib` crate that
-//! trips `-D dead-code`. The module-scoped allow below is the transient seam;
-//! it should be removed once T5 wires these in.
-#![allow(dead_code)]
+//! profile-apply orchestration (T5: `ProfileService::activate`/`deactivate`).
+//! `render_whole_file` and `remove_whole_file_if_owned` are now wired in there;
+//! `validate_rel_path` / `content_hash` are reached transitively via them. The
+//! previously-needed module-scoped `#![allow(dead_code)]` has been removed now
+//! that T5 consumes this API.
 
 use std::path::{Component, Path, PathBuf};
 

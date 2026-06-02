@@ -16,7 +16,10 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::services::agent::AgentService;
 use crate::services::command::CommandService;
-use crate::services::provider::ProviderService;
+use crate::services::profile_render::{
+    remove_whole_file_if_owned, render_whole_file, validate_rel_path,
+};
+use crate::services::provider::{write_live_with_common_config, ProviderService};
 use crate::services::{McpService, SkillService};
 use crate::store::AppState;
 
@@ -33,8 +36,13 @@ pub struct ProfileService;
 impl ProfileService {
     /// 激活指定 Profile。
     ///
-    /// 不变量：步骤 4 的 reconciler 永远在最后无条件运行；步骤 5 的 set_active_profile
-    /// 在 reconcile 成功之后才执行，因此中途失败会保留先前的 active profile。
+    /// 不变量（3a + 3b-1）：
+    /// - 步骤 4 的 reconciler 永远在最后无条件运行；
+    /// - 步骤 7 的 set_active_profile 在 reconcile 成功之后才执行，因此中途失败会保留
+    ///   先前的 active profile；
+    /// - whole-file dotfile（statusline.sh 等）与 manifest 生命周期：先记录 INCOMING、
+    ///   再移除 OUTGOING 不再需要的、最后基于「现在已是 incoming」重建 settings.json；
+    /// - 绝不删除用户亲手放置/编辑的文件（hash 不匹配则跳过 + warn）。
     pub fn activate(
         state: &AppState,
         app_type: AppType,
@@ -54,6 +62,9 @@ impl ProfileService {
                 app_type.as_str()
             )));
         }
+
+        // 捕获 OUTGOING（在任何 active 变化之前）。用于步骤 6 的旧文件回收。
+        let outgoing = state.db.get_active_profile(app_type.as_str())?;
 
         // ---- 2. Provider 切换（复用 ProviderService::switch）----
         if let Some(pid) = profile.current_provider_id.as_deref() {
@@ -151,18 +162,180 @@ impl ProfileService {
         AgentService::new(state.db.clone()).reconcile()?;
         McpService::sync_all_enabled(state)?;
 
-        // ---- 5. 设置 active profile（最后一步）----
+        // ---- 5. WHOLE-FILE dotfiles（INCOMING）----
+        // settings.json 由步骤 8 的确定性重建负责（第三层 deep-merge），CLAUDE.md 延后到 3b-2，
+        // 故此处仅处理其余整文件 dotfile（例如 statusline.sh）。
+        //
+        // 为支持「重复激活」幂等：先清除 INCOMING 已有的 whole_file manifest 行，
+        // 再依据当前 spec 重新记录 —— 避免每次激活都堆积陈旧行。其他 kind 的行不动。
+        //
+        // 但在清除之前必须**快照**这些行的 (target_path -> content_hash)，以便重新渲染时
+        // 把旧行的 hash 作为 prior_owned_hash 传给 render_whole_file。否则同一 profile 的
+        // 重复激活会出现：磁盘上已存在我们自己写的文件，但 prior_owned_hash=None =>
+        // owned=false => render_whole_file 跳过(Ok(None)) + 误报「被用户编辑」警告，且行已被
+        // 删除而再也不会重新记录（manifest 行丢失），破坏后续 OUTGOING 移除与 deactivate 拆除保证。
+        let prior_owned_hashes: std::collections::HashMap<String, Option<String>> = state
+            .db
+            .get_manifest_for_profile(profile_id, app_type.as_str())?
+            .into_iter()
+            .filter(|r| r.kind == "whole_file")
+            .map(|r| (r.target_path.clone(), r.content_hash.clone()))
+            .collect();
+        let incoming_whole_file_ids: Vec<i64> = state
+            .db
+            .get_manifest_for_profile(profile_id, app_type.as_str())?
+            .into_iter()
+            .filter(|r| r.kind == "whole_file")
+            .map(|r| r.id)
+            .collect();
+        state.db.delete_manifest_entries(&incoming_whole_file_ids)?;
+
+        let mut written_targets: HashSet<String> = HashSet::new();
+        for df in state.db.get_profile_dotfiles(profile_id)? {
+            if df.rel_path == "settings.json" || df.rel_path == "CLAUDE.md" {
+                continue;
+            }
+            // 把该 dotfile 解析到的绝对 target 与快照里的旧行匹配，取出 prior_owned_hash。
+            // 路径非法时回退到 None（render_whole_file 会再次校验并返回 Err/skip）。
+            let prior_owned_hash: Option<String> = validate_rel_path(&df.rel_path)
+                .ok()
+                .and_then(|p| {
+                    prior_owned_hashes
+                        .get(&p.to_string_lossy().to_string())
+                        .cloned()
+                })
+                .flatten();
+            match render_whole_file(
+                state.db.as_ref(),
+                profile_id,
+                &app_type,
+                &df.rel_path,
+                &df.content,
+                prior_owned_hash.as_deref(),
+            ) {
+                Ok(Some(entry)) => {
+                    written_targets.insert(entry.target_path.clone());
+                    state.db.record_manifest_entry(&entry)?;
+                }
+                Ok(None) => {
+                    result.warnings.push(format!(
+                        "dotfile skipped (unmanaged/user-edited): {}",
+                        df.rel_path
+                    ));
+                }
+                Err(e) => {
+                    result
+                        .warnings
+                        .push(format!("dotfile render failed for {}: {e}", df.rel_path));
+                }
+            }
+        }
+
+        // ---- 6. 移除 OUTGOING 不再需要的 whole-file ----
+        // 仅当存在 OUTGOING 且与 INCOMING 不同：对 OUTGOING 的每条 whole_file manifest 行，
+        // 若其 target 未被本次写入（不在 written_targets 中），则按归属删除磁盘文件
+        // （hash 匹配才删，否则跳过 + warn），随后删除对应 manifest 行。
+        if let Some(out) = &outgoing {
+            if out.id != profile_id {
+                let mut stale_ids: Vec<i64> = Vec::new();
+                for row in state
+                    .db
+                    .get_manifest_for_profile(&out.id, app_type.as_str())?
+                {
+                    if row.kind != "whole_file" || written_targets.contains(&row.target_path) {
+                        continue;
+                    }
+                    let removed =
+                        remove_whole_file_if_owned(&row.target_path, row.content_hash.as_deref())?;
+                    if !removed {
+                        result.warnings.push(format!(
+                            "outgoing dotfile kept (unmanaged/user-edited): {}",
+                            row.target_path
+                        ));
+                    }
+                    stale_ids.push(row.id);
+                }
+                state.db.delete_manifest_entries(&stale_ids)?;
+            }
+        }
+
+        // ---- 7. 设置 active profile（倒数第二步）----
         state.db.set_active_profile(app_type.as_str(), profile_id)?;
+
+        // ---- 8. 确定性重建 settings.json ----
+        // active 现已是 INCOMING，故 build_effective_settings_with_common_config（T3）
+        // 会把 INCOMING 的 settings.json 片段 deep-merge 进去；此写入是幂等且权威的。
+        match Self::current_provider(state, &app_type)? {
+            Some(p) => write_live_with_common_config(state.db.as_ref(), &app_type, &p)?,
+            None => result
+                .warnings
+                .push("no current provider; profile settings.json fragment not applied".into()),
+        }
 
         Ok(result)
     }
 
-    /// 取消激活指定 app_type 的当前 Profile。
+    /// 取消激活指定 app_type 的当前 Profile（3b 确定性 teardown）。
     ///
-    /// 3a 范围内仅清除 DB 中的 active 标志，**不**拆除磁盘上的内容（无 teardown）。
-    /// 切换 = activate(other)：step 3 的完全覆盖会移除先前 profile 的多余内容。
-    pub fn deactivate(state: &AppState, app_type: AppType) -> Result<(), AppError> {
-        state.db.clear_active_profile(app_type.as_str())
+    /// 3a 仅清除 DB active 标志、不拆除磁盘（no-teardown）。3b 改为：
+    /// 1. 读取并清除 active；
+    /// 2. 对原 active 的每条 whole_file manifest 行，按归属删除磁盘文件
+    ///    （hash 匹配才删，否则跳过；绝不删用户编辑过的文件），随后清空其 manifest；
+    /// 3. 以「无 profile 层」确定性重建 settings.json（active 已清除 -> T3 不再 merge 片段，
+    ///    settings.json = provider + common config）。
+    ///
+    /// 该路径不依赖任何 diff-removal，因此无 3a 切换时的 diff 移除隐患。
+    pub fn deactivate(state: &AppState, app_type: AppType) -> Result<ActivateResult, AppError> {
+        let mut result = ActivateResult::default();
+
+        // ---- 1. 读取并清除 active ----
+        let cur = state.db.get_active_profile(app_type.as_str())?;
+        state.db.clear_active_profile(app_type.as_str())?;
+
+        // ---- 2. 拆除原 active 的 whole-file dotfiles ----
+        if let Some(c) = &cur {
+            for row in state
+                .db
+                .get_manifest_for_profile(&c.id, app_type.as_str())?
+            {
+                if row.kind != "whole_file" {
+                    continue;
+                }
+                let removed =
+                    remove_whole_file_if_owned(&row.target_path, row.content_hash.as_deref())?;
+                if !removed {
+                    result.warnings.push(format!(
+                        "dotfile kept (unmanaged/user-edited): {}",
+                        row.target_path
+                    ));
+                }
+            }
+            state
+                .db
+                .clear_manifest_for_profile(&c.id, app_type.as_str())?;
+        }
+
+        // ---- 3. 无 profile 层确定性重建 settings.json ----
+        match Self::current_provider(state, &app_type)? {
+            Some(p) => write_live_with_common_config(state.db.as_ref(), &app_type, &p)?,
+            None => result
+                .warnings
+                .push("no current provider; settings.json not rebuilt on deactivate".into()),
+        }
+
+        Ok(result)
+    }
+
+    /// 读取指定 app 当前的 provider（is_current）的完整对象。
+    /// 组合 `get_current_provider`（取 id）+ `get_provider_by_id`（取完整对象）。
+    fn current_provider(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Result<Option<crate::provider::Provider>, AppError> {
+        match state.db.get_current_provider(app_type.as_str())? {
+            Some(id) => state.db.get_provider_by_id(&id, app_type.as_str()),
+            None => Ok(None),
+        }
     }
 }
 
@@ -368,8 +541,13 @@ mod tests {
             db.save_agent(&a).expect("save agent");
         }
 
+        // 3b: pin a provider so step-8 deterministic settings.json rebuild succeeds
+        // without emitting a "no current provider" warning (this test asserts none).
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
         // profile spec: commands=[b], agents=[x]
-        let p = profile("p1", content(&[], &["b"], &["x"], &[]), None);
+        let p = profile("p1", content(&[], &["b"], &["x"], &[]), Some("prov"));
         db.save_profile(&p).expect("save profile");
 
         let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
@@ -789,5 +967,304 @@ mod tests {
             })
             .unwrap_or(0);
         assert_eq!(md_count, 0, "no .md file should be written: {res:?}");
+    }
+
+    // ========== T5: dotfile render + manifest lifecycle ==========
+
+    /// 激活带 settings.json 片段 + statusline.sh 的 profile：
+    /// - settings.json 应同时含 provider env 与 profile 片段（statusLine.x==1）
+    /// - statusline.sh 应被写入为片段内容
+    /// - manifest 应有一条 whole_file 记录（statusline.sh）
+    #[test]
+    #[serial]
+    fn activate_applies_settings_fragment_and_statusline() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("p-existing"))
+            .expect("save provider");
+
+        let p = profile("p1", content(&[], &[], &[], &[]), Some("p-existing"));
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "settings.json", r#"{"statusLine":{"x":1}}"#)
+            .expect("set settings.json fragment");
+        db.set_profile_dotfile("p1", "statusline.sh", "echo hi")
+            .expect("set statusline.sh");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        // settings.json: provider env + profile fragment
+        let settings_path = home.claude_dir().join("settings.json");
+        assert!(settings_path.exists(), "settings.json should be written");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(
+            settings["env"]["ANTHROPIC_API_KEY"],
+            json!("token-p-existing"),
+            "provider env must be present: {res:?}"
+        );
+        assert_eq!(
+            settings["statusLine"]["x"],
+            json!(1),
+            "profile settings.json fragment must be merged: {res:?}"
+        );
+
+        // statusline.sh written verbatim
+        let statusline = home.claude_dir().join("statusline.sh");
+        assert!(statusline.exists(), "statusline.sh should be written");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "echo hi");
+
+        // manifest has a whole_file row for statusline.sh (NOT settings.json)
+        let rows = db.get_manifest_for_profile("p1", "claude").unwrap();
+        assert!(
+            rows.iter()
+                .any(|r| r.kind == "whole_file" && r.target_path.ends_with("statusline.sh")),
+            "manifest should record statusline.sh whole_file: {rows:?}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.target_path.ends_with("settings.json")),
+            "settings.json must NOT be tracked as a whole_file: {rows:?}"
+        );
+    }
+
+    /// 切换时移除 OUTGOING 的 statusline，但不删 INCOMING 的：
+    /// activate P (statusline "P") -> activate Q (无 statusline) -> statusline 被删除；
+    /// activate R (statusline "R") -> statusline == "R"。
+    #[test]
+    #[serial]
+    fn switch_removes_outgoing_statusline_not_incoming() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        // P: statusline "P"
+        db.save_profile(&profile("P", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save P");
+        db.set_profile_dotfile("P", "statusline.sh", "P")
+            .expect("statusline P");
+        // Q: no statusline
+        db.save_profile(&profile("Q", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save Q");
+        // R: statusline "R"
+        db.save_profile(&profile("R", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save R");
+        db.set_profile_dotfile("R", "statusline.sh", "R")
+            .expect("statusline R");
+
+        let statusline = home.claude_dir().join("statusline.sh");
+
+        ProfileService::activate(&state, AppType::Claude, "P").expect("activate P");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "P");
+
+        ProfileService::activate(&state, AppType::Claude, "Q").expect("activate Q");
+        assert!(
+            !statusline.exists(),
+            "owned outgoing statusline.sh should be removed on switch to Q"
+        );
+
+        ProfileService::activate(&state, AppType::Claude, "R").expect("activate R");
+        assert_eq!(
+            fs::read_to_string(&statusline).unwrap(),
+            "R",
+            "incoming R statusline should be written"
+        );
+    }
+
+    /// 用户手改过的 statusline 不被删除（hash 不匹配 -> skip + warn）。
+    #[test]
+    #[serial]
+    fn switch_does_not_delete_user_modified_statusline() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("P", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save P");
+        db.set_profile_dotfile("P", "statusline.sh", "P")
+            .expect("statusline P");
+        db.save_profile(&profile("Q", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save Q");
+
+        let statusline = home.claude_dir().join("statusline.sh");
+
+        ProfileService::activate(&state, AppType::Claude, "P").expect("activate P");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "P");
+
+        // user hand-edits statusline.sh -> hash no longer matches manifest
+        fs::write(&statusline, "EDITED").expect("user edit");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "Q").expect("activate Q");
+        assert_eq!(
+            fs::read_to_string(&statusline).unwrap(),
+            "EDITED",
+            "user-edited statusline.sh must NOT be deleted (hash mismatch)"
+        );
+        assert!(
+            res.warnings.iter().any(|w| w.contains("statusline.sh")),
+            "a skip warning mentioning statusline.sh should be present: {res:?}"
+        );
+    }
+
+    /// 回归（高危修复）：对同一 profile **重复激活**必须是幂等的 —— 不丢失 manifest 行、
+    /// 不误报「被用户编辑」警告。否则 manifest 行丢失会让后续 OUTGOING 移除/拆除找不到行，
+    /// 导致我们自己拥有的 statusline.sh 泄漏在磁盘上。
+    /// 步骤：activate P (有 statusline) -> 再次 activate P (断言 manifest 仍有该行、无误报警告)
+    /// -> activate Q (无 statusline)，断言我们拥有的 statusline.sh **被移除**（行未丢失）。
+    #[test]
+    #[serial]
+    fn reactivate_same_profile_keeps_manifest_and_removes_on_switch() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("P", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save P");
+        db.set_profile_dotfile("P", "statusline.sh", "P")
+            .expect("statusline P");
+        // Q has no statusline -> step 6 must remove the owned outgoing one.
+        db.save_profile(&profile("Q", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save Q");
+
+        let statusline = home.claude_dir().join("statusline.sh");
+
+        // First activate P: writes statusline.sh + records 1 whole_file manifest row.
+        ProfileService::activate(&state, AppType::Claude, "P").expect("activate P (1st)");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "P");
+        let rows1: Vec<_> = db
+            .get_manifest_for_profile("P", "claude")
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == "whole_file")
+            .collect();
+        assert_eq!(rows1.len(), 1, "first activate records the row: {rows1:?}");
+
+        // Re-activate the SAME profile P. Must be idempotent: the manifest row must
+        // persist (re-recorded) and NO spurious "user-edited" warning may appear.
+        let res = ProfileService::activate(&state, AppType::Claude, "P").expect("re-activate P");
+        assert!(
+            !res.warnings
+                .iter()
+                .any(|w| w.contains("statusline.sh") && w.contains("skipped")),
+            "re-activating the same profile must NOT emit a spurious skip warning: {res:?}"
+        );
+        let rows2: Vec<_> = db
+            .get_manifest_for_profile("P", "claude")
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == "whole_file")
+            .collect();
+        assert_eq!(
+            rows2.len(),
+            1,
+            "re-activate must keep exactly one whole_file row (not lose it): {rows2:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&statusline).unwrap(),
+            "P",
+            "statusline.sh content unchanged after idempotent re-activate"
+        );
+
+        // Now switch to Q (no statusline): the AgentHub-owned statusline.sh MUST be
+        // removed. This only works if the re-activate kept the manifest row.
+        ProfileService::activate(&state, AppType::Claude, "Q").expect("activate Q");
+        assert!(
+            !statusline.exists(),
+            "owned statusline.sh must be removed on switch to Q (manifest row was retained)"
+        );
+    }
+
+    /// deactivate 拆除 dotfiles，但保留 provider 键：
+    /// activate P (fragment + statusline + provider env.token) -> deactivate ->
+    /// statusline 消失；settings.json 含 provider env.token 但不含 statusLine；
+    /// get_active_profile == None。
+    #[test]
+    #[serial]
+    fn deactivate_tears_down_dotfiles_keeps_provider_keys() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("P", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save P");
+        db.set_profile_dotfile("P", "settings.json", r#"{"statusLine":{"x":1}}"#)
+            .expect("settings fragment");
+        db.set_profile_dotfile("P", "statusline.sh", "echo hi")
+            .expect("statusline");
+
+        ProfileService::activate(&state, AppType::Claude, "P").expect("activate P");
+        let statusline = home.claude_dir().join("statusline.sh");
+        assert!(statusline.exists(), "statusline written by activate");
+
+        ProfileService::deactivate(&state, AppType::Claude).expect("deactivate");
+
+        // statusline torn down
+        assert!(
+            !statusline.exists(),
+            "deactivate should tear down owned statusline.sh"
+        );
+
+        // active cleared
+        assert!(
+            db.get_active_profile("claude").unwrap().is_none(),
+            "active profile should be cleared"
+        );
+
+        // settings.json: provider env survives, profile fragment gone
+        let settings_path = home.claude_dir().join("settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(
+            settings["env"]["ANTHROPIC_API_KEY"],
+            json!("token-prov"),
+            "provider env token must remain after deactivate"
+        );
+        assert!(
+            settings.get("statusLine").is_none(),
+            "profile fragment statusLine must be gone after deactivate: {settings}"
+        );
+    }
+
+    /// 没有任何 current provider 时，activate 仍 Ok 且带警告，不 panic，不写 settings。
+    #[test]
+    #[serial]
+    fn activate_missing_provider_warns_no_settings_write() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // profile pins no provider AND no provider is current in DB
+        db.save_profile(&profile("p1", content(&[], &[], &[], &[]), None))
+            .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate ok");
+        assert!(
+            res.warnings
+                .iter()
+                .any(|w| w.contains("no current provider")),
+            "should warn about no current provider: {res:?}"
+        );
+        let active = db.get_active_profile("claude").unwrap().expect("active");
+        assert_eq!(active.id, "p1");
     }
 }
