@@ -2132,7 +2132,31 @@
     "skillsFailedDescription": "请打开 Skills 页面点击“导入已有”手动导入（或重启后再试）。"
   },
   "agents": {
-    "title": "智能体"
+    "title": "智能体",
+    "manage": "智能体",
+    "create": "新建智能体",
+    "edit": "编辑智能体",
+    "delete": "删除智能体",
+    "deleteConfirm": "删除智能体",
+    "deleteConfirmDescription": "确定要删除 \"{{name}}\" 吗？此操作无法撤销。",
+    "empty": "暂无智能体",
+    "emptyDescription": "创建 Claude 智能体以定义自主任务行为",
+    "count": "共 {{count}} 个智能体",
+    "enable": "启用",
+    "enabledClaude": "已为 Claude 启用",
+    "name": "智能体名称",
+    "namePlaceholder": "例如：my-agent",
+    "content": "内容",
+    "contentPlaceholder": "输入智能体指令（Markdown / 说明）……",
+    "description": "描述",
+    "descriptionPlaceholder": "可选简短描述",
+    "tags": "标签",
+    "tagsPlaceholder": "例如：效率,编程（逗号分隔）",
+    "save": "保存",
+    "cancel": "取消",
+    "createSuccess": "智能体 {{name}} 已创建",
+    "deleteSuccess": "智能体 {{name}} 已删除",
+    "nameInvalid": "名称只能包含字母、数字、点、连字符和下划线"
   },
   "modelTest": {
     "testProvider": "测试模型"

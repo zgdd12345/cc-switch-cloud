@@ -2077,7 +2077,31 @@
     "skillsFailedDescription": "請開啟 Skills 頁面點擊「匯入現有」手動匯入（或重新啟動後再試）。"
   },
   "agents": {
-    "title": "Agent"
+    "title": "Agent",
+    "manage": "Agent",
+    "create": "新增 Agent",
+    "edit": "編輯 Agent",
+    "delete": "刪除 Agent",
+    "deleteConfirm": "刪除 Agent",
+    "deleteConfirmDescription": "確定要刪除 \"{{name}}\" 嗎？此操作無法復原。",
+    "empty": "尚無 Agent",
+    "emptyDescription": "建立 Claude Agent 以定義自主任務行為",
+    "count": "共 {{count}} 個 Agent",
+    "enable": "啟用",
+    "enabledClaude": "已為 Claude 啟用",
+    "name": "Agent 名稱",
+    "namePlaceholder": "例如：my-agent",
+    "content": "內容",
+    "contentPlaceholder": "輸入 Agent 指令（Markdown / 說明）……",
+    "description": "描述",
+    "descriptionPlaceholder": "可選簡短描述",
+    "tags": "標籤",
+    "tagsPlaceholder": "例如：效率,程式設計（逗號分隔）",
+    "save": "儲存",
+    "cancel": "取消",
+    "createSuccess": "Agent {{name}} 已建立",
+    "deleteSuccess": "Agent {{name}} 已刪除",
+    "nameInvalid": "名稱只能包含字母、數字、點、連字號和底線"
   },
   "modelTest": {
     "testProvider": "測試模型"

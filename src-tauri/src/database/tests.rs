@@ -763,3 +763,16 @@ fn fresh_db_has_commands_table() -> Result<(), AppError> {
     assert_eq!(n, 1, "commands table must exist on a fresh DB");
     Ok(())
 }
+
+#[test]
+fn fresh_db_has_agents_table() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='agents'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(n, 1, "agents table must exist on a fresh DB");
+    Ok(())
+}

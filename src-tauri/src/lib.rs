@@ -52,6 +52,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    agent::AgentService,
     command::CommandService,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
@@ -884,6 +885,15 @@ pub fn run() {
                 )));
             }
 
+            // 初始化 AgentService
+            {
+                let db = app.state::<AppState>().db.clone();
+                let agent_service = AgentService::new(db);
+                app.manage(commands::agent::AgentServiceState(Arc::new(
+                    agent_service,
+                )));
+            }
+
             // 初始化 CopilotAuthManager
             {
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
@@ -1250,6 +1260,14 @@ pub fn run() {
             commands::set_command_enabled,
             commands::scan_unmanaged_commands,
             commands::import_commands_from_disk,
+            // Agent management
+            commands::get_installed_agents,
+            commands::create_agent,
+            commands::update_agent,
+            commands::delete_agent,
+            commands::set_agent_enabled,
+            commands::scan_unmanaged_agents,
+            commands::import_agents_from_disk,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,

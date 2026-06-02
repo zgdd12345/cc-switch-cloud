@@ -222,6 +222,28 @@ pub struct InstalledCommand {
     pub installed_at: i64,
 }
 
+/// 已安装的 Agent（v2.5+ 统一结构）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledAgent {
+    /// 唯一标识符（格式："owner/repo:agent" 或 "local:agent"）
+    pub id: String,
+    /// 显示名称
+    pub name: String,
+    /// Agent 内容（Markdown）
+    pub content: String,
+    /// 描述
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 标签列表（JSON 数组，存储为 TEXT）
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 是否在 Claude 中启用
+    pub enabled_claude: bool,
+    /// 安装时间（Unix 时间戳）
+    pub installed_at: i64,
+}
+
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
