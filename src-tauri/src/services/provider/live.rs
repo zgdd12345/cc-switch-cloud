@@ -503,6 +503,25 @@ pub(crate) fn build_effective_settings_with_common_config(
         }
     }
 
+    // 3b-1: third deep-merge layer = active profile settings.json fragment (Claude only).
+    // Applied AFTER the common-config layer so every settings.json write — including
+    // re-sync / failover — deterministically reproduces the active profile fragment,
+    // keeping settings.json a single-writer file. df.content is used LITERALLY in 3b-1
+    // (no ${} substitution yet; that is 3b-2).
+    if matches!(app_type, AppType::Claude) {
+        if let Some(profile) = db.get_active_profile(app_type.as_str())? {
+            if let Some(df) = db.get_profile_dotfile(&profile.id, "settings.json")? {
+                match serde_json::from_str::<serde_json::Value>(&df.content) {
+                    Ok(frag) => json_deep_merge(&mut effective_settings, &frag),
+                    Err(e) => log::warn!(
+                        "profile {} settings.json fragment invalid JSON, skipping: {e}",
+                        profile.id
+                    ),
+                }
+            }
+        }
+    }
+
     Ok(effective_settings)
 }
 
@@ -546,26 +565,58 @@ pub(crate) fn strip_common_config_from_live_settings(
         }
     };
 
-    let backfill_settings = if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        match snippet.as_deref() {
-            Some(snippet_text) => {
-                match remove_common_config_from_settings(app_type, &live_settings, snippet_text) {
-                    Ok(settings) => settings,
-                    Err(err) => {
-                        log::warn!(
-                            "Failed to strip common config for {} provider '{}': {err}",
-                            app_type.as_str(),
-                            provider.id
-                        );
-                        live_settings
+    let mut backfill_settings =
+        if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+            match snippet.as_deref() {
+                Some(snippet_text) => {
+                    match remove_common_config_from_settings(app_type, &live_settings, snippet_text)
+                    {
+                        Ok(settings) => settings,
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to strip common config for {} provider '{}': {err}",
+                                app_type.as_str(),
+                                provider.id
+                            );
+                            live_settings
+                        }
                     }
                 }
+                None => live_settings,
             }
-            None => live_settings,
+        } else {
+            live_settings
+        };
+
+    // 3b-1 (REVERSE): strip the active-profile settings.json fragment so it never
+    // bleeds into the provider's settings_config DB row. At backfill time the active
+    // profile is still the OUTGOING one (set_active runs later in activate), which is
+    // exactly the fragment currently merged onto disk — so stripping it here is correct.
+    // The provider-vs-fragment same-key collision edge (deep_remove may drop a key the
+    // provider also set to the same value) is identical to the pre-existing
+    // common-config strip behavior (remove_common_config_from_settings) and is accepted
+    // for parity.
+    if matches!(app_type, AppType::Claude) {
+        match db.get_active_profile(app_type.as_str()) {
+            Ok(Some(profile)) => match db.get_profile_dotfile(&profile.id, "settings.json") {
+                Ok(Some(df)) => {
+                    if let Ok(frag) = serde_json::from_str::<Value>(&df.content) {
+                        json_deep_remove(&mut backfill_settings, &frag);
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => log::warn!(
+                    "Failed to load profile settings.json fragment while backfilling '{}': {err}",
+                    provider.id
+                ),
+            },
+            Ok(None) => {}
+            Err(err) => log::warn!(
+                "Failed to load active profile while backfilling '{}': {err}",
+                provider.id
+            ),
         }
-    } else {
-        live_settings
-    };
+    }
 
     restore_live_settings_for_provider_backfill(app_type, provider, backfill_settings)
 }
@@ -1646,5 +1697,131 @@ mod tests {
             .map(|value| value.as_str().expect("tool id should be string"))
             .collect();
         assert_eq!(values, vec!["tool2"]);
+    }
+
+    // --- 3b-1: active-profile settings.json fragment threading -----------------
+
+    use crate::app_config::Profile;
+    use serial_test::serial;
+    use std::env;
+
+    /// RAII guard that points CC_SWITCH_TEST_HOME / HOME at a fresh temp dir,
+    /// mirroring database/backup.rs ~line 801. FS-touching tests must use this
+    /// and be `#[serial]`.
+    struct FragmentTestHome {
+        #[allow(dead_code)]
+        dir: tempfile::TempDir,
+        old_test_home: Option<std::ffi::OsString>,
+        old_home: Option<std::ffi::OsString>,
+    }
+
+    impl FragmentTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create temp home");
+            let old_test_home = env::var_os("CC_SWITCH_TEST_HOME");
+            let old_home = env::var_os("HOME");
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            env::set_var("HOME", dir.path());
+            Self {
+                dir,
+                old_test_home,
+                old_home,
+            }
+        }
+    }
+
+    impl Drop for FragmentTestHome {
+        fn drop(&mut self) {
+            match &self.old_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match &self.old_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+        }
+    }
+
+    /// Insert an FK-valid active Claude profile and attach a settings.json fragment.
+    fn seed_active_profile_fragment(db: &Database, profile_id: &str, fragment: &str) {
+        let profile = Profile {
+            id: profile_id.to_string(),
+            app_type: "claude".to_string(),
+            name: profile_id.to_string(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: Default::default(),
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+        db.set_active_profile("claude", profile_id)
+            .expect("set active profile");
+        db.set_profile_dotfile(profile_id, "settings.json", fragment)
+            .expect("set profile dotfile");
+    }
+
+    #[test]
+    #[serial]
+    fn profile_settings_fragment_merges_over_provider_keeps_env() {
+        let _home = FragmentTestHome::new();
+        let db = Database::memory().expect("memory db");
+
+        let provider = Provider::with_id(
+            "p-frag".to_string(),
+            "Claude Frag".to_string(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok" } }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+
+        seed_active_profile_fragment(&db, "prof:frag", r#"{"statusLine":{"x":1}}"#);
+
+        write_live_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("write live with fragment");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live settings");
+        assert_eq!(
+            live["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("tok"),
+            "provider env token must survive fragment merge"
+        );
+        assert_eq!(
+            live["statusLine"]["x"],
+            json!(1),
+            "active profile settings.json fragment must be merged into live settings"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resync_reproduces_fragment() {
+        let _home = FragmentTestHome::new();
+        let db = Database::memory().expect("memory db");
+
+        let provider = Provider::with_id(
+            "p-frag".to_string(),
+            "Claude Frag".to_string(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok" } }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+
+        seed_active_profile_fragment(&db, "prof:frag", r#"{"statusLine":{"x":1}}"#);
+
+        write_live_with_common_config(&db, &AppType::Claude, &provider).expect("first write");
+        // Re-sync / failover must deterministically rebuild the same effective settings.
+        write_live_with_common_config(&db, &AppType::Claude, &provider).expect("second write");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live settings");
+        assert_eq!(
+            live["statusLine"]["x"],
+            json!(1),
+            "re-sync must reproduce the active profile fragment, not lose it"
+        );
     }
 }

@@ -513,6 +513,88 @@ base_url = "http://localhost:8080"
         );
     }
 
+    /// CRITICAL (3b-1): the active-profile settings.json fragment must NOT bleed
+    /// into the previous provider's settings_config during the switch backfill.
+    #[test]
+    #[serial]
+    fn provider_settings_config_not_polluted_by_fragment_on_backfill() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        // Provider P (current) and provider Q (switch target).
+        let provider_p = Provider::with_id(
+            "P".into(),
+            "Claude P".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-p" } }),
+            None,
+        );
+        let provider_q = Provider::with_id(
+            "Q".into(),
+            "Claude Q".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-q" } }),
+            None,
+        );
+        db.save_provider("claude", &provider_p)
+            .expect("save provider P");
+        db.save_provider("claude", &provider_q)
+            .expect("save provider Q");
+        db.set_current_provider("claude", "P")
+            .expect("set current provider P");
+        crate::settings::set_current_provider(&AppType::Claude, Some("P"))
+            .expect("set local current provider P");
+
+        // Active profile carries a settings.json fragment on disk.
+        let profile = crate::app_config::Profile {
+            id: "prof:p".into(),
+            app_type: "claude".into(),
+            name: "prof:p".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: Default::default(),
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+        db.set_active_profile("claude", "prof:p")
+            .expect("set active profile");
+        db.set_profile_dotfile("prof:p", "settings.json", r#"{"statusLine":{"x":1}}"#)
+            .expect("set profile dotfile");
+
+        // Write live settings for P; this merges the fragment onto disk.
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &provider_p)
+            .expect("write live for P");
+
+        let original_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists");
+        let original_p_config = original_p.settings_config.clone();
+        assert!(
+            original_p_config.get("statusLine").is_none(),
+            "precondition: P must not contain statusLine before the switch"
+        );
+
+        // Switch to Q -> backfill re-captures live into P; the fragment must be stripped.
+        ProviderService::switch(&state, AppType::Claude, "Q").expect("switch to Q");
+
+        let reloaded_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after switch")
+            .expect("P exists after switch");
+        assert_eq!(
+            reloaded_p.settings_config, original_p_config,
+            "P.settings_config must be JSON-identical to original (no fragment bleed)"
+        );
+        assert!(
+            reloaded_p.settings_config.get("statusLine").is_none(),
+            "active profile statusLine fragment must not bleed into provider P"
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[tokio::test]
     #[serial]
