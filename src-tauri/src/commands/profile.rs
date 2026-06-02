@@ -5,7 +5,7 @@
 //! - 简单查询通过 `AppState` 直达 DB
 //! - activate/deactivate 委托给无状态 `ProfileService`（镜像 switch_provider 模式）
 
-use crate::app_config::{AppType, Profile, ProfileSpec};
+use crate::app_config::{AppType, ManifestEntry, Profile, ProfileDotfile, ProfileSpec};
 use crate::services::profile::{ActivateResult, ProfileService};
 use crate::store::AppState;
 use std::str::FromStr;
@@ -161,4 +161,59 @@ pub fn get_active_profile(
     state: State<'_, AppState>,
 ) -> Result<Option<Profile>, String> {
     state.db.get_active_profile(&app).map_err(|e| e.to_string())
+}
+
+// ========== Profile Dotfile 管理 ==========
+
+/// 保存/更新 Profile dotfile（先校验路径防止路径穿越）
+#[tauri::command]
+pub fn set_profile_dotfile(
+    id: String,
+    rel_path: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::services::profile_render::validate_rel_path(&rel_path).map_err(|e| e.to_string())?;
+    state
+        .db
+        .set_profile_dotfile(&id, &rel_path, &content)
+        .map_err(|e| e.to_string())
+}
+
+/// 获取某个 Profile 的所有 dotfiles
+#[tauri::command]
+pub fn get_profile_dotfiles(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ProfileDotfile>, String> {
+    state
+        .db
+        .get_profile_dotfiles(&id)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除某个 Profile 的单个 dotfile；返回是否找到该行
+#[tauri::command]
+pub fn delete_profile_dotfile(
+    id: String,
+    rel_path: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    state
+        .db
+        .delete_profile_dotfile(&id, &rel_path)
+        .map_err(|e| e.to_string())
+}
+
+/// 获取某个 Profile + app 的全部 manifest 记录
+#[tauri::command]
+pub fn get_profile_manifest(
+    id: String,
+    app: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ManifestEntry>, String> {
+    state
+        .db
+        .get_manifest_for_profile(&id, &app)
+        .map_err(|e| e.to_string())
 }

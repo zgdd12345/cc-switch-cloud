@@ -1277,6 +1277,10 @@ pub fn run() {
             commands::activate_profile,
             commands::deactivate_profile,
             commands::get_active_profile,
+            commands::set_profile_dotfile,
+            commands::get_profile_dotfiles,
+            commands::delete_profile_dotfile,
+            commands::get_profile_manifest,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
