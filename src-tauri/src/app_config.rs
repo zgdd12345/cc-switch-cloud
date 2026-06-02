@@ -287,6 +287,30 @@ pub struct Profile {
     pub created_at: i64,
 }
 
+/// A single dotfile stored for a profile (profile_dotfiles table)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileDotfile {
+    pub profile_id: String,
+    pub rel_path: String,
+    pub content: String,
+}
+
+/// A row in the apply_manifest table recording a file written during profile apply
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestEntry {
+    pub id: i64,
+    pub channel: String,
+    pub profile_id: Option<String>,
+    pub app_type: String,
+    pub target_path: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    pub created_at: i64,
+}
+
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

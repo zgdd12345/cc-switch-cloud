@@ -5,7 +5,9 @@
 pub mod agents;
 pub mod commands;
 pub mod failover;
+pub mod manifest;
 pub mod mcp;
+pub mod profile_dotfiles;
 pub mod profiles;
 pub mod prompts;
 pub mod providers;
