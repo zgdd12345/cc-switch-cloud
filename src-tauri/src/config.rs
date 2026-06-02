@@ -47,6 +47,11 @@ pub fn get_commands_dir() -> PathBuf {
     get_claude_config_dir().join("commands")
 }
 
+/// Claude 子代理目录 (~/.claude/agents)
+pub fn get_agents_dir() -> PathBuf {
+    get_claude_config_dir().join("agents")
+}
+
 /// 默认 Claude MCP 配置文件路径 (~/.claude.json)
 pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
