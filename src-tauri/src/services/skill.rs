@@ -1598,16 +1598,22 @@ impl SkillService {
 
         let dest = app_dir.join(directory);
 
+        // 数据安全不变式：永远不要递归删除目标处的「真实(非 symlink)目录」。
+        // 只有当 dest 不存在、或 dest 是 symlink（AgentHub 自己管理、可安全替换的产物）时，
+        // 才允许 materialize。若 dest 已经是一个真实目录/文件（可能是用户自己创建、
+        // 与本 skill 重名的数据），则跳过并 warn，绝不销毁用户数据。
+        // 该保护对 profile 激活（sync_to_app -> sync_to_app_dir）与单 skill toggle 路径同时生效。
+        if dest.exists() && !Self::is_symlink(&dest) {
+            log::warn!(
+                "skill {directory}: a real user directory already exists at the app skills path; skipping to protect user data"
+            );
+            return Ok(());
+        }
+
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
-                if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, directory)?;
-                    log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
-                    return Ok(());
-                }
-
                 if Self::is_symlink(&dest) {
                     Self::remove_path(&dest)?;
                 }
@@ -1754,7 +1760,72 @@ impl SkillService {
         canonical_target.starts_with(&canonical_ssot)
     }
 
-    /// 从应用目录删除 Skill（支持 symlink 和真实目录）
+    /// 判断 app 目录下某路径是否是 AgentHub 「自己管理、可安全删除」的产物。
+    ///
+    /// 数据安全不变式（与 sync_to_app_dir 的 materialize 保护对称）：profile
+    /// 失活 / 单 skill 关闭 / 卸载「永远不要」递归删除用户亲手创建的真实目录。
+    /// 只有以下两类才算 AgentHub 管理的产物、可以安全删除：
+    /// 1. 任意 symlink —— 都是我们 materialize 时创建的链接（删链接不动源）。
+    /// 2. 真实目录，但其内容哈希与 SSOT 中同名 skill 一致 —— 说明它是 copy 同步
+    ///    模式下我们复制过去的托管副本，而非用户自己的数据。
+    ///
+    /// 若是与某 skill 重名、但内容并非来自 SSOT 的真实目录（典型如 T5 修复后
+    /// 被跳过 materialize 而保留下来的用户目录），则判定为不可删除。
+    fn is_managed_app_skill(path: &Path, directory: &str) -> bool {
+        // symlink：始终是我们创建的链接，删除安全。
+        if Self::is_symlink(path) {
+            return true;
+        }
+
+        // 不存在或不是目录：交给调用方按需处理（这里只判定「真实目录」是否托管）。
+        if !path.is_dir() {
+            // 普通文件不在 skill 管理语义内，保守起见视为「非托管」，不删除。
+            return false;
+        }
+
+        // 真实目录：仅当内容哈希与 SSOT 源一致时，才认定是托管 copy 副本。
+        let Ok(ssot_dir) = Self::get_ssot_dir() else {
+            return false;
+        };
+        let source = ssot_dir.join(directory);
+        if !source.is_dir() {
+            // SSOT 中没有对应源，无法证明这是托管副本 —— 视为用户数据，不删除。
+            return false;
+        }
+
+        let (Ok(source_hash), Ok(dest_hash)) = (
+            Self::compute_dir_hash(&source),
+            Self::compute_dir_hash(path),
+        ) else {
+            return false;
+        };
+
+        source_hash == dest_hash
+    }
+
+    /// 安全删除 app 目录下某 skill 路径：仅当它是 AgentHub 管理的产物
+    /// （symlink 或内容哈希匹配 SSOT 的托管副本）时才删除；否则跳过 + warn，
+    /// 绝不 remove_dir_all 用户亲手创建的真实目录。
+    fn remove_managed_app_skill(path: &Path, directory: &str, app: &AppType) -> Result<()> {
+        if !path.exists() && !Self::is_symlink(path) {
+            return Ok(());
+        }
+
+        if Self::is_managed_app_skill(path, directory) {
+            Self::remove_path(path)?;
+            log::debug!("Skill {directory} 已从 {app:?} 删除");
+        } else {
+            log::warn!(
+                "skill {directory}: app 目录下存在一个非托管的真实目录（疑似用户数据），\
+                 跳过删除以保护用户数据 (app={app:?}, path={})",
+                path.display()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// 从应用目录删除 Skill（仅删除 AgentHub 托管产物，绝不删用户真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
@@ -1763,12 +1834,7 @@ impl SkillService {
         let app_dir = Self::get_app_skills_dir(app)?;
         let skill_path = app_dir.join(directory);
 
-        if skill_path.exists() || Self::is_symlink(&skill_path) {
-            Self::remove_path(&skill_path)?;
-            log::debug!("Skill {directory} 已从 {app:?} 删除");
-        }
-
-        Ok(())
+        Self::remove_managed_app_skill(&skill_path, directory, app)
     }
 
     /// 同步所有已启用的 Skills 到指定应用
@@ -1798,7 +1864,8 @@ impl SkillService {
 
                 if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
                     if !skill.apps.is_enabled_for(app) {
-                        Self::remove_path(&path)?;
+                        // 失活：仅删除 AgentHub 托管产物，绝不删用户重名真实目录。
+                        Self::remove_managed_app_skill(&path, &skill.directory, app)?;
                     }
                     continue;
                 }
@@ -3058,6 +3125,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     fn write_skill(dir: &Path, name: &str) {
@@ -3123,5 +3191,173 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn sync_to_app_dir_preserves_user_real_dir_on_name_collision() {
+        // 隔离真实用户数据：重定向 home + Claude override 目录到临时路径。
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_home = std::env::var_os("HOME");
+        let test_home = std::env::temp_dir().join("cc-switch-skill-collide-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        std::env::set_var("HOME", &test_home);
+
+        // 把 Claude app skills 目录通过 override 指到 test_home 下，确保完全隔离，
+        // 不依赖 dirs::home_dir() 的具体实现。
+        let claude_override = test_home.join("claude-app");
+        let prev_settings = crate::settings::get_settings();
+        let mut configured = prev_settings.clone();
+        configured.claude_config_dir = Some(claude_override.to_string_lossy().to_string());
+        configured.skill_sync_method = SyncMethod::Auto;
+        configured.skill_storage_location = SkillStorageLocation::CcSwitch;
+        crate::settings::update_settings(configured).expect("apply test settings");
+
+        let outcome = std::panic::catch_unwind(|| {
+            // 1. SSOT 中创建名为 "collide" 的合法 skill（含 SKILL.md）。
+            let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+            let ssot_skill = ssot_dir.join("collide");
+            write_skill(&ssot_skill, "Collide Skill");
+
+            // 2. 在 app skills 目录预先放置一个真实(非 symlink)用户目录，含哨兵文件。
+            let app_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+            let user_dir = app_dir.join("collide");
+            fs::create_dir_all(&user_dir).expect("create user real dir");
+            let sentinel = user_dir.join("USER_OWNED.txt");
+            fs::write(&sentinel, "keep me").expect("write sentinel");
+
+            // 3. 触发同步——绝不允许销毁用户真实目录。
+            SkillService::sync_to_app_dir("collide", &AppType::Claude)
+                .expect("sync should succeed (and skip) without error");
+
+            // 4. 哨兵文件必须原样保留。
+            assert!(
+                sentinel.exists(),
+                "user-owned sentinel file must survive name collision"
+            );
+            assert_eq!(
+                fs::read_to_string(&sentinel).expect("read sentinel"),
+                "keep me",
+                "user-owned sentinel contents must be unchanged"
+            );
+        });
+
+        // teardown: 恢复 settings 与环境变量（即使断言 panic 也要执行）。
+        let _ = crate::settings::update_settings(prev_settings);
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match old_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        if let Err(payload) = outcome {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn disable_and_uninstall_preserve_user_real_dir_on_name_collision() {
+        // 对称于 sync_to_app_dir 的 materialize 保护：DISABLE / 卸载方向
+        // 同样绝不允许 remove_dir_all 用户亲手创建的、与 DB skill 重名的真实目录。
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_home = std::env::var_os("HOME");
+        let test_home = std::env::temp_dir().join("cc-switch-skill-disable-collide-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        std::env::set_var("HOME", &test_home);
+
+        let claude_override = test_home.join("claude-app");
+        let prev_settings = crate::settings::get_settings();
+        let mut configured = prev_settings.clone();
+        configured.claude_config_dir = Some(claude_override.to_string_lossy().to_string());
+        configured.skill_sync_method = SyncMethod::Auto;
+        configured.skill_storage_location = SkillStorageLocation::CcSwitch;
+        crate::settings::update_settings(configured).expect("apply test settings");
+
+        let outcome = std::panic::catch_unwind(|| {
+            // SSOT 中存在合法 skill "collide"（带 SKILL.md），DB 记录其为 Claude 启用。
+            let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+            let ssot_skill = ssot_dir.join("collide");
+            write_skill(&ssot_skill, "Collide Skill");
+
+            let db = Arc::new(Database::memory().expect("memory db"));
+            let skill = InstalledSkill {
+                id: "local:collide".to_string(),
+                name: "Collide Skill".to_string(),
+                description: None,
+                directory: "collide".to_string(),
+                repo_owner: None,
+                repo_name: None,
+                repo_branch: None,
+                readme_url: None,
+                apps: SkillApps::only(&AppType::Claude),
+                installed_at: 0,
+                content_hash: SkillService::compute_dir_hash(&ssot_skill).ok(),
+                updated_at: 0,
+            };
+            db.save_skill(&skill).expect("save skill");
+
+            // app 目录下预置一个真实(非 symlink)用户目录，内容与 SSOT 不同 -> 非托管。
+            let app_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+            let user_dir = app_dir.join("collide");
+            fs::create_dir_all(&user_dir).expect("create user real dir");
+            let sentinel = user_dir.join("USER_OWNED.txt");
+            fs::write(&sentinel, "keep me").expect("write sentinel");
+
+            // 1) DISABLE 路径：toggle_app(.., false) -> remove_from_app -> 必须跳过。
+            SkillService::toggle_app(&db, "local:collide", &AppType::Claude, false)
+                .expect("toggle off should succeed (and skip) without error");
+            assert!(
+                sentinel.exists(),
+                "disable: user-owned sentinel must survive name collision"
+            );
+            assert_eq!(
+                fs::read_to_string(&sentinel).expect("read sentinel after disable"),
+                "keep me",
+                "disable: user-owned sentinel contents must be unchanged"
+            );
+
+            // 2) sync_to_app 协调器的 disable 分支：重新标记为禁用并触发全量同步。
+            //    （toggle_app 已把 DB 改为 Claude=false，sync_to_app 会走 disable 分支）。
+            SkillService::sync_to_app(&db, &AppType::Claude)
+                .expect("sync_to_app should succeed (and skip) without error");
+            assert!(
+                sentinel.exists(),
+                "sync_to_app disable branch: user-owned sentinel must survive"
+            );
+
+            // 3) UNINSTALL 路径：uninstall -> remove_from_app(all apps) -> 必须跳过。
+            SkillService::uninstall(&db, "local:collide").expect("uninstall should succeed");
+            assert!(
+                sentinel.exists(),
+                "uninstall: user-owned sentinel must survive name collision"
+            );
+            assert_eq!(
+                fs::read_to_string(&sentinel).expect("read sentinel after uninstall"),
+                "keep me",
+                "uninstall: user-owned sentinel contents must be unchanged"
+            );
+        });
+
+        let _ = crate::settings::update_settings(prev_settings);
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match old_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        if let Err(payload) = outcome {
+            std::panic::resume_unwind(payload);
+        }
     }
 }
