@@ -184,6 +184,20 @@ export function useSetProfileDotfile() {
   });
 }
 
+/** Query the applied-files manifest for a profile */
+export function useProfileManifest(
+  id: string | undefined,
+  app: string | undefined,
+) {
+  return useQuery({
+    queryKey: ["profiles", "manifest", id],
+    queryFn: () => profilesApi.getManifest(id!, app!),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+    enabled: Boolean(id) && Boolean(app),
+  });
+}
+
 /** Delete a dotfile for a profile */
 export function useDeleteProfileDotfile() {
   const queryClient = useQueryClient();
@@ -204,5 +218,6 @@ export type {
   InstalledProfile,
   ProfileSpec,
   ProfileDotfile,
+  ManifestEntry,
   ActivateProfileResult,
 } from "@/lib/api/profiles";

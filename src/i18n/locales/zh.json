@@ -2760,6 +2760,12 @@
     "settingsFragment": "settings.json 片段",
     "settingsFragmentHint": "此 JSON 片段将深度合并到供应商设置之上",
     "statusline": "statusline.sh",
-    "statuslineHint": "当此配置文件处于激活状态时，将此 Shell 脚本渲染到终端状态栏"
+    "statuslineHint": "当此配置文件处于激活状态时，将此 Shell 脚本渲染到终端状态栏",
+    "variables": "变量",
+    "variablesHint": "当此配置文件激活时，以环境变量形式注入的键值对",
+    "varKey": "键",
+    "varValue": "值",
+    "addVar": "添加变量",
+    "appliedFiles": "已应用文件"
   }
 }

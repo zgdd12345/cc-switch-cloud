@@ -14,6 +14,7 @@ import {
   useProfileDotfiles,
   useSetProfileDotfile,
   useDeleteProfileDotfile,
+  useProfileManifest,
 } from "@/hooks/useProfiles";
 import type { InstalledProfile, ProfileSpec } from "@/lib/api/profiles";
 import { useProvidersQuery } from "@/lib/query/queries";
@@ -35,6 +36,27 @@ const stringToList = (s: string): string[] =>
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+
+interface VarRow {
+  key: string;
+  value: string;
+}
+
+const varsToRows = (vars: Record<string, unknown>): VarRow[] =>
+  Object.entries(vars).map(([key, value]) => ({
+    key,
+    value: String(value ?? ""),
+  }));
+
+const rowsToVars = (rows: VarRow[]): Record<string, string> => {
+  const result: Record<string, string> = {};
+  for (const { key, value } of rows) {
+    if (key.trim()) {
+      result[key.trim()] = value;
+    }
+  }
+  return result;
+};
 
 export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
   open,
@@ -64,6 +86,10 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
   const [statuslineContent, setStatuslineContent] = useState("");
   const [dotfilesOpen, setDotfilesOpen] = useState(false);
 
+  // Variables editor state
+  const [varRows, setVarRows] = useState<VarRow[]>([]);
+  const [varsOpen, setVarsOpen] = useState(false);
+
   const createMutation = useCreateProfile();
   const updateMutation = useUpdateProfile();
   const setDotfileMutation = useSetProfileDotfile();
@@ -79,6 +105,12 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
     isEdit && open ? profile?.id : undefined,
   );
 
+  // Load applied-files manifest when editing
+  const { data: manifestEntries } = useProfileManifest(
+    isEdit && open ? profile?.id : undefined,
+    isEdit && open ? appId : undefined,
+  );
+
   // Sync form when dialog opens
   useEffect(() => {
     if (open) {
@@ -90,6 +122,7 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
         setCommands(listToString(profile.spec.content.commands));
         setAgents(listToString(profile.spec.content.agents));
         setMcp(listToString(profile.spec.content.mcp));
+        setVarRows(varsToRows(profile.spec.vars));
       } else {
         setName("");
         setDescription("");
@@ -101,6 +134,8 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
         setSettingsContent("");
         setStatuslineContent("");
         setDotfilesOpen(false);
+        setVarRows([]);
+        setVarsOpen(false);
       }
     }
   }, [open, profile]);
@@ -122,7 +157,7 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
       agents: stringToList(agents),
       mcp: stringToList(mcp),
     },
-    vars: profile?.spec.vars ?? {},
+    vars: rowsToVars(varRows),
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -295,6 +330,76 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
             />
           </div>
 
+          {/* Variables section — both create and edit mode */}
+          <div className="space-y-2 rounded-md border border-input p-3">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-sm font-medium"
+              onClick={() => setVarsOpen((v) => !v)}
+            >
+              <span>{t("profiles.variables")}</span>
+              <span className="text-muted-foreground text-xs">
+                {varsOpen ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {varsOpen && (
+              <div className="space-y-2 pt-1">
+                <p className="text-muted-foreground text-xs">
+                  {t("profiles.variablesHint")}
+                </p>
+                {varRows.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={row.key}
+                      onChange={(e) => {
+                        const next = [...varRows];
+                        next[idx] = { ...next[idx], key: e.target.value };
+                        setVarRows(next);
+                      }}
+                      placeholder={t("profiles.varKey")}
+                      aria-label={t("profiles.varKey")}
+                      className="w-1/3 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <input
+                      type="text"
+                      value={row.value}
+                      onChange={(e) => {
+                        const next = [...varRows];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setVarRows(next);
+                      }}
+                      placeholder={t("profiles.varValue")}
+                      aria-label={t("profiles.varValue")}
+                      className="flex-1 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setVarRows(varRows.filter((_, i) => i !== idx))
+                      }
+                      className="text-muted-foreground hover:text-destructive text-xs"
+                      aria-label="delete-var-row"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setVarRows([...varRows, { key: "", value: "" }])
+                  }
+                >
+                  {t("profiles.addVar")}
+                </Button>
+              </div>
+            )}
+          </div>
+
           {/* Dotfiles section — edit mode only */}
           {isEdit && (
             <div className="space-y-2 rounded-md border border-input p-3">
@@ -347,6 +452,30 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
                     />
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Applied files section — edit mode only */}
+          {isEdit && (
+            <div className="space-y-1 rounded-md border border-input p-3">
+              <p className="text-sm font-medium">
+                {t("profiles.appliedFiles")}
+              </p>
+              {manifestEntries && manifestEntries.length > 0 ? (
+                <ul className="space-y-1 pt-1">
+                  {manifestEntries.map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="text-muted-foreground truncate font-mono text-xs"
+                      title={entry.targetPath}
+                    >
+                      {entry.targetPath}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground text-xs">—</p>
               )}
             </div>
           )}

@@ -54,6 +54,9 @@ vi.mock("@/hooks/useProfiles", () => ({
     mutateAsync: vi.fn().mockResolvedValue(true),
     isPending: false,
   }),
+  useProfileManifest: () => ({
+    data: [],
+  }),
 }));
 
 vi.mock("@/lib/query/queries", () => ({
