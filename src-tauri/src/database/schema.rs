@@ -118,6 +118,21 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 6b. Agents 表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (
+            id             TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            content        TEXT NOT NULL DEFAULT '',
+            description    TEXT,
+            tags           TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            installed_at   INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 7. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
@@ -450,6 +465,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（添加 commands 表）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加 agents 表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1237,6 +1257,26 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("v10 -> v11 迁移完成：已添加 commands 表");
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加 agents 表
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agents (
+            id             TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            content        TEXT NOT NULL DEFAULT '',
+            description    TEXT,
+            tags           TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            installed_at   INTEGER NOT NULL DEFAULT 0
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("v11 -> v12 迁移完成：已添加 agents 表");
         Ok(())
     }
 
