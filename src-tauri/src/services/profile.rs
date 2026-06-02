@@ -601,4 +601,199 @@ mod tests {
         assert!(cmd_file.exists(), "command file must still be present");
         assert!(agent_file.exists(), "agent file must still be present");
     }
+
+    // ========== T7: 对抗式安全测试套件 ==========
+
+    /// Step 1: 切换 profile 时绝不删除用户亲手放进 commands 目录、无 DB 记录的文件。
+    /// reconcile 只遍历 DB 行，故用户文件天然幸免；先激活 A(commands=[a])，
+    /// 再激活 B(commands=[b])，整个过程 mine.md 必须始终存在。
+    #[test]
+    #[serial]
+    fn switching_profiles_never_deletes_user_authored_command_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // 用户亲手放进 commands 目录、无 DB 记录的文件
+        let cmd_dir = home.claude_dir().join("commands");
+        fs::create_dir_all(&cmd_dir).expect("mkdir commands");
+        let mine = cmd_dir.join("mine.md");
+        fs::write(&mine, "user authored, no db row").expect("write mine.md");
+
+        // 两个互斥 profile：A 启用 a，B 启用 b
+        db.save_command(&cmd("c:a", "a", false)).expect("save a");
+        db.save_command(&cmd("c:b", "b", false)).expect("save b");
+        db.save_profile(&profile("A", content(&[], &["a"], &[], &[]), None))
+            .expect("save A");
+        db.save_profile(&profile("B", content(&[], &["b"], &[], &[]), None))
+            .expect("save B");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert!(mine.exists(), "mine.md must survive activate A");
+        assert!(cmd_dir.join("a.md").exists(), "a.md materialized by A");
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+        // b 启用、a 被移除（完全覆盖），但用户文件必须岿然不动
+        assert!(cmd_dir.join("b.md").exists(), "b.md materialized by B");
+        assert!(
+            !cmd_dir.join("a.md").exists(),
+            "a.md removed on switch to B"
+        );
+        assert!(
+            mine.exists(),
+            "switching profiles must NOT delete a user-authored command file"
+        );
+        assert_eq!(
+            fs::read_to_string(&mine).unwrap(),
+            "user authored, no db row"
+        );
+    }
+
+    /// Step 1 (twin): agents 目录下用户亲手放进的、无 DB 记录的文件同样必须幸免。
+    #[test]
+    #[serial]
+    fn switching_profiles_never_deletes_user_authored_agent_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        let agent_dir = home.claude_dir().join("agents");
+        fs::create_dir_all(&agent_dir).expect("mkdir agents");
+        let mine = agent_dir.join("mine.md");
+        fs::write(&mine, "user authored agent, no db row").expect("write mine.md");
+
+        db.save_agent(&agent("a:x", "x", false)).expect("save x");
+        db.save_agent(&agent("a:y", "y", false)).expect("save y");
+        db.save_profile(&profile("A", content(&[], &[], &["x"], &[]), None))
+            .expect("save A");
+        db.save_profile(&profile("B", content(&[], &[], &["y"], &[]), None))
+            .expect("save B");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert!(mine.exists(), "mine.md must survive activate A");
+        assert!(agent_dir.join("x.md").exists(), "x.md materialized by A");
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+        assert!(agent_dir.join("y.md").exists(), "y.md materialized by B");
+        assert!(
+            !agent_dir.join("x.md").exists(),
+            "x.md removed on switch to B"
+        );
+        assert!(
+            mine.exists(),
+            "switching profiles must NOT delete a user-authored agent file"
+        );
+        assert_eq!(
+            fs::read_to_string(&mine).unwrap(),
+            "user authored agent, no db row"
+        );
+    }
+
+    /// Step 2: 真实（非 symlink）用户目录与某个「被 profile 启用」的 skill 同名时，
+    /// 激活该 profile 绝不能销毁用户目录。这测试的是 T5 加固的 **写入通路**
+    /// （sync_to_app_dir 的 materialize 保护），而非失活时的孤儿清理：碰撞名 s1
+    /// 明确在 profile 的启用集合中，因此会走到 sync_to_app_dir。
+    #[test]
+    #[serial]
+    fn switching_profiles_never_deletes_user_authored_skill_dir() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // skill s1：DB 中标记为 claude 已启用，并物化 SSOT 源（否则源缺失会让
+        // sync 报错而非走到 materialize 保护分支）。
+        let s1_apps = SkillApps {
+            claude: true,
+            ..Default::default()
+        };
+        db.save_skill(&skill("sk:1", "s1", s1_apps))
+            .expect("save s1");
+        materialize_ssot_skill("s1");
+
+        // 在 app skills 目录下放一个与 s1 同名的「真实用户目录」+ 哨兵文件。
+        // 该目录是用户亲手创建的（非 AgentHub 托管的 symlink/副本）。
+        let app_skills_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+        let collision = app_skills_dir.join("s1");
+        fs::create_dir_all(&collision).expect("mkdir collision");
+        let sentinel = collision.join("DO_NOT_DELETE.txt");
+        fs::write(&sentinel, "precious user data").expect("write sentinel");
+
+        // profile 启用 s1（碰撞名在启用集合内 -> 触发写入通路）
+        db.save_profile(&profile("A", content(&["s1"], &[], &[], &[]), None))
+            .expect("save A");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+
+        // T5 加固：materialize 检测到 dest 是真实目录 -> 跳过 + warn，绝不 remove_dir_all。
+        assert!(
+            sentinel.exists(),
+            "user-authored skill dir sentinel must survive profile activation (T5 write-pass guard)"
+        );
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "precious user data");
+        let is_symlink = fs::symlink_metadata(&collision)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        assert!(
+            !is_symlink && collision.is_dir(),
+            "collision path must remain the user's real directory, not be replaced by a symlink"
+        );
+    }
+
+    /// Step 3: profile spec 含路径穿越 / 分隔符名（"../evil"、"a/b"）。
+    /// 由于这些名字没有匹配的 DB 行，activate 对它们是 no-op（仅 warn），
+    /// 不应返回 Err，也不得在受管 commands 目录之外写出任何文件。
+    /// 另外刻意塞入一行非法命令名的脏数据，验证 reconcile 的 validate_name 会跳过它。
+    #[test]
+    #[serial]
+    fn profile_name_path_traversal_blocked() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // 受管 commands 目录的「外面」一层，用来检测逃逸写入。
+        let claude_dir = home.claude_dir();
+        let cmd_dir = claude_dir.join("commands");
+        fs::create_dir_all(&cmd_dir).expect("mkdir commands");
+
+        // 直接经 DAO 注入一行非法命令名的脏数据（save_command 不做名称校验），
+        // 该行被标为启用，以确保 reconcile 会尝试物化它 —— validate_name 应拦截。
+        db.save_command(&cmd("c:evil", "../evil", true))
+            .expect("save illegal-named row");
+
+        // profile spec 引用两个非法名（无匹配 DB 行 -> no-op）。
+        db.save_profile(&profile(
+            "A",
+            content(&[], &["../evil", "a/b"], &[], &[]),
+            None,
+        ))
+        .expect("save A");
+
+        // activate 不得返回 Err。
+        let res = ProfileService::activate(&state, AppType::Claude, "A").expect("activate ok");
+
+        // 受管 commands 目录内不得出现 evil.md（reconcile validate_name 跳过脏行）。
+        assert!(
+            !cmd_dir.join("../evil.md").exists() && !cmd_dir.join("evil.md").exists(),
+            "no file should be materialized for an illegal command name"
+        );
+        // 逃逸目标：~/.claude 下不得出现 evil.md（穿越未越过 commands 目录）。
+        assert!(
+            !claude_dir.join("evil.md").exists(),
+            "path traversal must NOT write outside the managed commands dir"
+        );
+        // commands 目录内除潜在 .tmp 外不应有任何 .md 文件被写出。
+        let md_count = fs::read_dir(&cmd_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+                    .count()
+            })
+            .unwrap_or(0);
+        assert_eq!(md_count, 0, "no .md file should be written: {res:?}");
+    }
 }
