@@ -668,6 +668,114 @@ base_url = "http://localhost:8080"
         );
     }
 
+    /// CRITICAL (3b-1): when the active-profile settings.json fragment contains a
+    /// `${VAR}` that resolves to a real secret, the switch backfill must strip the
+    /// RENDERED fragment — not the literal template — so the secret never bleeds into
+    /// the outgoing provider's settings_config DB row. This is the regression guard
+    /// for the literal-parse bug: stripping the literal `${SECRET}` would leave the
+    /// rendered `sk-real-SECRET-123` leaf unmatched and capture it into P.
+    #[test]
+    #[serial]
+    fn provider_settings_config_not_polluted_by_rendered_var_fragment_on_backfill() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        // Provider P (current) and provider Q (switch target).
+        let provider_p = Provider::with_id(
+            "P".into(),
+            "Claude P".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-p" } }),
+            None,
+        );
+        let provider_q = Provider::with_id(
+            "Q".into(),
+            "Claude Q".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-q" } }),
+            None,
+        );
+        db.save_provider("claude", &provider_p)
+            .expect("save provider P");
+        db.save_provider("claude", &provider_q)
+            .expect("save provider Q");
+        db.set_current_provider("claude", "P")
+            .expect("set current provider P");
+        crate::settings::set_current_provider(&AppType::Claude, Some("P"))
+            .expect("set local current provider P");
+
+        // Active profile defines SECRET=sk-real-SECRET-123 and a fragment that
+        // references it via `${SECRET}`. The forward pass writes the RENDERED value
+        // to disk; the backfill strip must re-render to match it.
+        let mut vars = serde_json::Map::new();
+        vars.insert(
+            "SECRET".into(),
+            serde_json::Value::String("sk-real-SECRET-123".into()),
+        );
+        let profile = crate::app_config::Profile {
+            id: "prof:p".into(),
+            app_type: "claude".into(),
+            name: "prof:p".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: crate::app_config::ProfileSpec {
+                vars,
+                ..Default::default()
+            },
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+        db.set_active_profile("claude", "prof:p")
+            .expect("set active profile");
+        db.set_profile_dotfile(
+            "prof:p",
+            "settings.json",
+            r#"{"extraField":{"leak":"${SECRET}"}}"#,
+        )
+        .expect("set profile dotfile");
+
+        // Write live settings for P; this merges the RENDERED fragment onto disk
+        // (extraField.leak = "sk-real-SECRET-123").
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &provider_p)
+            .expect("write live for P");
+
+        let original_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists");
+        let original_p_config = original_p.settings_config.clone();
+        assert!(
+            original_p_config.get("extraField").is_none(),
+            "precondition: P must not contain extraField before the switch"
+        );
+
+        // Switch to Q -> backfill re-captures live into P; the rendered fragment must
+        // be stripped, leaving P byte-identical and free of the secret.
+        ProviderService::switch(&state, AppType::Claude, "Q").expect("switch to Q");
+
+        let reloaded_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after switch")
+            .expect("P exists after switch");
+        assert_eq!(
+            reloaded_p.settings_config, original_p_config,
+            "P.settings_config must be JSON-identical to original (no rendered fragment bleed)"
+        );
+        assert!(
+            reloaded_p.settings_config.get("extraField").is_none(),
+            "rendered ${{SECRET}} fragment must not bleed into provider P"
+        );
+        let serialized = serde_json::to_string(&reloaded_p.settings_config)
+            .expect("serialize P settings_config");
+        assert!(
+            !serialized.contains("sk-real-SECRET-123"),
+            "the rendered secret must never appear in P.settings_config: {serialized}"
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[tokio::test]
     #[serial]

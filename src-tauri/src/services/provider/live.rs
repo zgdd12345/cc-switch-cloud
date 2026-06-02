@@ -585,18 +585,33 @@ pub(crate) fn build_effective_settings_with_common_config(
         }
     }
 
-    // 3b-1: third deep-merge layer = active profile settings.json fragment (Claude only).
+    // 3b-1/3b-2: third deep-merge layer = active profile settings.json fragment (Claude only).
     // Applied AFTER the common-config layer so every settings.json write — including
     // re-sync / failover — deterministically reproduces the active profile fragment,
-    // keeping settings.json a single-writer file. df.content is used LITERALLY in 3b-1
-    // (no ${} substitution yet; that is 3b-2).
+    // keeping settings.json a single-writer file. 3b-2 renders `${VAR}` in the fragment
+    // (JSON-escaped) against the active profile's layered var map BEFORE parsing/merging.
+    // `profile` here is the active profile this function already loaded — correct for
+    // switch / re-sync / failover and for activate step-8 where active is already INCOMING.
+    // Render warnings are only logged here, not surfaced.
     if matches!(app_type, AppType::Claude) {
         if let Some(profile) = db.get_active_profile(app_type.as_str())? {
             if let Some(df) = db.get_profile_dotfile(&profile.id, "settings.json")? {
-                match serde_json::from_str::<serde_json::Value>(&df.content) {
+                let mut warns = Vec::new();
+                let rendered = crate::services::profile_vars::render_with_profile_vars(
+                    db,
+                    app_type,
+                    &profile,
+                    &df.content,
+                    /*json_escape=*/ true,
+                    &mut warns,
+                )?;
+                for w in &warns {
+                    log::warn!("profile {} settings.json fragment render: {w}", profile.id);
+                }
+                match serde_json::from_str::<serde_json::Value>(&rendered) {
                     Ok(frag) => json_deep_merge(&mut effective_settings, &frag),
                     Err(e) => log::warn!(
-                        "profile {} settings.json fragment invalid JSON, skipping: {e}",
+                        "profile {} settings.json fragment invalid JSON after render, skipping: {e}",
                         profile.id
                     ),
                 }
@@ -685,12 +700,42 @@ pub(crate) fn strip_common_config_from_live_settings(
         match db.get_active_profile(app_type.as_str()) {
             Ok(Some(profile)) => match db.get_profile_dotfile(&profile.id, "settings.json") {
                 Ok(Some(df)) => {
-                    if let Ok(frag) = serde_json::from_str::<Value>(&df.content) {
-                        strip_fragment_restoring_provider_owned(
-                            &mut backfill_settings,
-                            &frag,
-                            &provider.settings_config,
-                        );
+                    // Re-render `${VAR}` with the SAME precedence map the forward pass
+                    // (build_effective_settings_with_common_config) used to write the
+                    // fragment to disk. Parsing the LITERAL template instead would leave
+                    // the live RENDERED value (e.g. a real secret) unmatched by
+                    // json_is_subset leaf-equality, so the fragment leaf would never be
+                    // stripped and the rendered value would bleed into the outgoing
+                    // provider's settings_config DB row. Render to the rendered fragment
+                    // first so the subset/restore logic compares like-for-like.
+                    let mut warns = Vec::new();
+                    match crate::services::profile_vars::render_with_profile_vars(
+                        db,
+                        app_type,
+                        &profile,
+                        &df.content,
+                        /*json_escape=*/ true,
+                        &mut warns,
+                    ) {
+                        Ok(rendered) => {
+                            for w in &warns {
+                                log::warn!(
+                                    "profile {} settings.json fragment render (backfill strip): {w}",
+                                    profile.id
+                                );
+                            }
+                            if let Ok(frag) = serde_json::from_str::<Value>(&rendered) {
+                                strip_fragment_restoring_provider_owned(
+                                    &mut backfill_settings,
+                                    &frag,
+                                    &provider.settings_config,
+                                );
+                            }
+                        }
+                        Err(err) => log::warn!(
+                            "Failed to render profile settings.json fragment while backfilling '{}': {err}",
+                            provider.id
+                        ),
                     }
                 }
                 Ok(None) => {}
