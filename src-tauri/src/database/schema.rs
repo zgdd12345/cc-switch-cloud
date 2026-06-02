@@ -165,16 +165,17 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 6e. Apply Manifest 表（schema v13，3a 中未使用）
+        // 6e. Apply Manifest 表（schema v13，3a 中未使用；v14 添加 content_hash）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS apply_manifest (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel     TEXT NOT NULL DEFAULT 'global',
-        profile_id  TEXT,
-        app_type    TEXT NOT NULL,
-        target_path TEXT NOT NULL,
-        kind        TEXT NOT NULL,
-        created_at  INTEGER NOT NULL DEFAULT 0,
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel      TEXT NOT NULL DEFAULT 'global',
+        profile_id   TEXT,
+        app_type     TEXT NOT NULL,
+        target_path  TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        created_at   INTEGER NOT NULL DEFAULT 0,
+        content_hash TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
     )",
             [],
@@ -523,6 +524,11 @@ impl Database {
                         log::info!("migrating db v12 -> v13 (add profiles tables)");
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
+                    }
+                    13 => {
+                        log::info!("migrating db v13 -> v14");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1381,6 +1387,19 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("v12 -> v13 migration done: profiles / profile_dotfiles / apply_manifest");
+        Ok(())
+    }
+
+    /// v13 -> v14 迁移：apply_manifest 添加 content_hash 列
+    ///
+    /// 注意：`create_tables_on_conn` 已按最新（v14）结构建表，且迁移运行器在
+    /// 全新库（version=0）时会从 0 跑到 SCHEMA_VERSION。此时 apply_manifest 已含
+    /// content_hash，裸 `ALTER TABLE ... ADD COLUMN` 会因 "duplicate column name"
+    /// 失败（ADD COLUMN 非幂等）。因此复用既有的 `add_column_if_missing` 幂等助手，
+    /// 与本模块其它 ADD COLUMN 迁移（如 proxy_config）保持一致。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(conn, "apply_manifest", "content_hash", "TEXT")?;
+        log::info!("v13 -> v14 migration done: apply_manifest.content_hash");
         Ok(())
     }
 

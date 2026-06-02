@@ -837,3 +837,32 @@ fn fresh_db_has_apply_manifest_table() -> Result<(), AppError> {
     assert_eq!(n, 1, "apply_manifest table must exist on a fresh DB");
     Ok(())
 }
+
+#[test]
+fn apply_manifest_has_content_hash_after_migrate() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 13).expect("seed v13");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version"),
+        SCHEMA_VERSION
+    );
+
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(apply_manifest);")
+        .expect("prepare pragma");
+    let mut rows = stmt.query([]).expect("query pragma");
+    let mut found = false;
+    while let Some(row) = rows.next().expect("read row") {
+        let column_name: String = row.get(1).expect("name");
+        if column_name == "content_hash" {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "apply_manifest must have a content_hash column after v13 -> v14 migration"
+    );
+}
