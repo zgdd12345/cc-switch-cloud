@@ -21,10 +21,6 @@ use crate::services::{McpService, SkillService};
 use crate::store::AppState;
 
 /// activate 的结果：携带非致命警告。
-//
-// NOTE: `#[allow(dead_code)]` 暂留——ProfileService 的 Tauri command 层封装
-// （`commands/profile.rs`）在后续任务接入；届时移除这些 allow。
-#[allow(dead_code)]
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivateResult {
@@ -32,10 +28,8 @@ pub struct ActivateResult {
 }
 
 /// Profile 业务逻辑服务（无状态单元结构，镜像 ProviderService / McpService）。
-#[allow(dead_code)]
 pub struct ProfileService;
 
-#[allow(dead_code)]
 impl ProfileService {
     /// 激活指定 Profile。
     ///

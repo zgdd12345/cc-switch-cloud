@@ -1268,6 +1268,15 @@ pub fn run() {
             commands::set_agent_enabled,
             commands::scan_unmanaged_agents,
             commands::import_agents_from_disk,
+            // Profile management
+            commands::get_profiles,
+            commands::get_profiles_for_app,
+            commands::create_profile,
+            commands::update_profile,
+            commands::delete_profile,
+            commands::activate_profile,
+            commands::deactivate_profile,
+            commands::get_active_profile,
             // Auto launch
             commands::set_auto_launch,
             commands::get_auto_launch_status,
