@@ -326,13 +326,17 @@ impl ProfileService {
         Ok(result)
     }
 
-    /// 读取指定 app 当前的 provider（is_current）的完整对象。
-    /// 组合 `get_current_provider`（取 id）+ `get_provider_by_id`（取完整对象）。
+    /// 读取指定 app 当前的 provider 的完整对象。
+    ///
+    /// 用 `crate::settings::get_effective_current_provider`（设备本地 override 优先于
+    /// DB 的 is_current，与 switch_normal / 所有磁盘物化点一致）解析当前 provider id，
+    /// 再 `get_provider_by_id` 取完整对象。若改用裸 DB is_current，会在本地 override
+    /// 与 DB is_current 不一致的设备上选错 provider 来重建 settings.json。
     fn current_provider(
         state: &AppState,
         app_type: &AppType,
     ) -> Result<Option<crate::provider::Provider>, AppError> {
-        match state.db.get_current_provider(app_type.as_str())? {
+        match crate::settings::get_effective_current_provider(&state.db, app_type)? {
             Some(id) => state.db.get_provider_by_id(&id, app_type.as_str()),
             None => Ok(None),
         }
@@ -1241,6 +1245,49 @@ mod tests {
         assert!(
             settings.get("statusLine").is_none(),
             "profile fragment statusLine must be gone after deactivate: {settings}"
+        );
+    }
+
+    /// INTERACTION (3b-1): activate 的步骤 8（最终 settings.json 重建）必须用
+    /// `get_effective_current_provider`（设备本地 override 优先于 DB is_current）解析
+    /// 当前 provider，而非裸 DB is_current。否则在「本地 override != DB is_current」的
+    /// 设备上会用错 provider 重建。
+    ///
+    /// 构造：DB is_current = B，设备本地 override = A，激活一个**不 pin** provider 的
+    /// profile（故步骤 2 不切换、不改 is_current）；断言 settings.json 用 A（有效当前）
+    /// 而非 B 重建（env token == token-A）。
+    #[test]
+    #[serial]
+    fn activate_rebuild_uses_effective_current_provider_not_db_is_current() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // Two providers; DB is_current points at B, device-local override at A.
+        db.save_provider("claude", &claude_provider("A"))
+            .expect("save A");
+        db.save_provider("claude", &claude_provider("B"))
+            .expect("save B");
+        db.set_current_provider("claude", "B")
+            .expect("DB is_current = B");
+        crate::settings::set_current_provider(&AppType::Claude, Some("A"))
+            .expect("device-local current = A");
+
+        // Profile pins NO provider -> step 2 switch is skipped, is_current untouched.
+        db.save_profile(&profile("p1", content(&[], &[], &[], &[]), None))
+            .expect("save profile");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate p1");
+
+        let settings_path = home.claude_dir().join("settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(
+            settings["env"]["ANTHROPIC_API_KEY"],
+            json!("token-A"),
+            "step 8 must rebuild from the EFFECTIVE current provider A (device-local \
+             override), not DB is_current B: {settings}"
         );
     }
 

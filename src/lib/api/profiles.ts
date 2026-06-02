@@ -106,12 +106,8 @@ export const profilesApi = {
   },
 
   /** Set (upsert) a dotfile for a profile */
-  async setDotfile(
-    id: string,
-    relPath: string,
-    content: string,
-  ): Promise<ProfileDotfile> {
-    return await invoke("set_profile_dotfile", { id, relPath, content });
+  async setDotfile(id: string, relPath: string, content: string): Promise<void> {
+    await invoke("set_profile_dotfile", { id, relPath, content });
   },
 
   /** Delete a dotfile for a profile; returns true if it existed */
