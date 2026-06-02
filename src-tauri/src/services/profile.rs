@@ -1163,6 +1163,88 @@ mod tests {
         assert_eq!(settings["model"], json!("prof"));
     }
 
+    /// SAME-PROVIDER no-bleed (3b-2 T3): profiles A and B BOTH pin provider P with
+    /// DIFFERENT settings.json fragments. Activating A then B drives
+    /// `ProviderService::switch(state, P)` twice; because `current_id == id == P`,
+    /// `switch_normal` takes the no-backfill branch (`if current_id != id`), so the
+    /// outgoing fragment is never re-captured into P and cannot bleed. The forward
+    /// step-8 deterministic rebuild (active is now B) re-renders P + B's fragment, so
+    /// live settings.json reflects B (not A). Asserts P.settings_config is unchanged
+    /// across both activations AND live carries B's fragment, not A's.
+    ///
+    /// (Confirms the no-backfill => no-bleed reasoning: a same-provider switch never
+    /// reverse-strips, so there is no rendered-fragment leak path on this branch.)
+    #[test]
+    #[serial]
+    fn same_provider_switch_no_bleed() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // Single provider P; capture its stored config as the immutable baseline.
+        db.save_provider("claude", &claude_provider("P"))
+            .expect("save provider P");
+        let original_p_config = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists")
+            .settings_config
+            .clone();
+
+        // Two profiles, both pinned to P, with DIFFERENT fragment-exclusive keys.
+        let a = profile("A", content(&[], &[], &[], &[]), Some("P"));
+        let b = profile("B", content(&[], &[], &[], &[]), Some("P"));
+        db.save_profile(&a).expect("save profile A");
+        db.save_profile(&b).expect("save profile B");
+        db.set_profile_dotfile("A", "settings.json", r#"{"statusLine":{"who":"A"}}"#)
+            .expect("set A fragment");
+        db.set_profile_dotfile("B", "settings.json", r#"{"statusLine":{"who":"B"}}"#)
+            .expect("set B fragment");
+
+        // Activate A (switch to P, then activate B (switch P->P: same provider).
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        let after_a = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after A")
+            .expect("P exists")
+            .settings_config
+            .clone();
+        assert_eq!(
+            after_a, original_p_config,
+            "P.settings_config must be unchanged after activating A (forward-only, no bleed)"
+        );
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+        let after_b = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after B")
+            .expect("P exists")
+            .settings_config
+            .clone();
+        assert_eq!(
+            after_b, original_p_config,
+            "P.settings_config must be unchanged after same-provider switch A->B \
+             (no-backfill branch => no fragment bleed)"
+        );
+
+        // Live settings.json must reflect B's fragment, NOT A's: step-8 forward rebuild
+        // re-renders with active=B, so A's statusLine is overwritten by B's.
+        let settings_path = home.claude_dir().join("settings.json");
+        let live: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(
+            live["statusLine"]["who"],
+            json!("B"),
+            "live settings.json must reflect the incoming (B) fragment after same-provider switch: {live}"
+        );
+        assert_eq!(
+            live["env"]["ANTHROPIC_API_KEY"],
+            json!("token-P"),
+            "provider P env must remain present in live settings: {live}"
+        );
+    }
+
     /// 未知变量在 statusline 中保留字面量并在 warnings 中提及。
     #[test]
     #[serial]
