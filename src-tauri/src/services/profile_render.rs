@@ -23,6 +23,23 @@ use crate::config::{delete_file, get_claude_config_dir, write_text_file};
 use crate::database::Database;
 use crate::error::AppError;
 
+/// Walk up the path hierarchy from `path` until we find the longest existing
+/// ancestor (or `path` itself if it exists).  Returns `None` only if `path`
+/// has no parent and doesn't exist (shouldn't happen for absolute paths under a
+/// tempdir/home).
+fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut cur = path;
+    loop {
+        if cur.exists() {
+            return Some(cur.to_path_buf());
+        }
+        match cur.parent() {
+            Some(parent) => cur = parent,
+            None => return None,
+        }
+    }
+}
+
 /// Validate a profile-supplied relative dotfile path and resolve it under the
 /// Claude config dir.
 ///
@@ -60,6 +77,26 @@ pub fn validate_rel_path(rel_path: &str) -> Result<PathBuf, AppError> {
             "dotfile rel_path 解析后逃逸出配置目录: {rel_path}"
         )));
     }
+
+    // Canonicalize re-check: if the nearest existing ancestor of the joined path
+    // resolves to something outside the config dir (e.g. a pre-existing symlinked
+    // subdir under ~/.claude pointing outside), reject the path.  We only attempt
+    // this when the ancestor actually exists; if no ancestor exists yet the lexical
+    // check above is already sufficient.
+    // If canonicalization fails (e.g. base itself doesn't exist yet in some test
+    // scenarios) fall through — the lexical check already passed.
+    if let Some(existing_ancestor) = nearest_existing_ancestor(&p) {
+        if let (Ok(canon_ancestor), Ok(canon_base)) =
+            (existing_ancestor.canonicalize(), base.canonicalize())
+        {
+            if !canon_ancestor.starts_with(&canon_base) {
+                return Err(AppError::InvalidInput(format!(
+                    "dotfile rel_path 的现有祖先路径经符号链接解析后逃逸出配置目录: {rel_path}"
+                )));
+            }
+        }
+    }
+
     Ok(p)
 }
 
@@ -373,5 +410,43 @@ mod tests {
             Some(owned_hash.as_str())
         )?);
         Ok(())
+    }
+
+    /// Ensure validate_rel_path rejects a path whose first component is a
+    /// symlink pointing outside the config dir.
+    ///
+    /// Layout:
+    ///   <tmp_home>/.claude/           ← config base (created)
+    ///   <tmp_home>/.claude/sub        ← symlink → <external_tmp>/
+    ///   validate_rel_path("sub/x.sh") ← must return Err
+    #[test]
+    #[serial]
+    #[cfg(unix)]
+    fn validate_rel_path_rejects_symlinked_escape() {
+        let _home = TempHome::new();
+        let config_dir = get_claude_config_dir();
+        fs::create_dir_all(&config_dir).expect("create config dir");
+
+        // Create an external temp dir (outside ~/.claude) that the symlink will point to.
+        let external = TempDir::new().expect("external temp dir");
+
+        // Create a symlink ~/.claude/sub -> external dir.
+        let symlink_path = config_dir.join("sub");
+        std::os::unix::fs::symlink(external.path(), &symlink_path)
+            .expect("create symlink sub -> external");
+
+        // validate_rel_path must reject "sub/x.sh" because canonicalizing the
+        // existing ancestor "sub" escapes the config dir.
+        let result = validate_rel_path("sub/x.sh");
+        assert!(
+            result.is_err(),
+            "validate_rel_path should reject path whose subdir is a symlink escaping ~/.claude, got {result:?}"
+        );
+
+        // Confirm no file was written outside.
+        assert!(
+            !external.path().join("x.sh").exists(),
+            "no file should have been created in the external dir"
+        );
     }
 }

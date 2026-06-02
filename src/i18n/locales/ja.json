@@ -2760,6 +2760,12 @@
     "settingsFragment": "settings.json フラグメント",
     "settingsFragmentHint": "プロバイダー設定にディープマージされる JSON フラグメント",
     "statusline": "statusline.sh",
-    "statuslineHint": "このプロファイルがアクティブな間、ターミナルのステータスラインに表示されるシェルスクリプト"
+    "statuslineHint": "このプロファイルがアクティブな間、ターミナルのステータスラインに表示されるシェルスクリプト",
+    "variables": "変数",
+    "variablesHint": "このプロファイルの settings.json / statusline テンプレート内の ${VAR} プレースホルダーに代入される値です。",
+    "varKey": "キー",
+    "varValue": "値",
+    "addVar": "変数を追加",
+    "appliedFiles": "適用済みファイル"
   }
 }

@@ -2705,6 +2705,12 @@
     "settingsFragment": "settings.json 片段",
     "settingsFragmentHint": "此 JSON 片段將深度合併到供應商設定之上",
     "statusline": "statusline.sh",
-    "statuslineHint": "當此設定檔處於使用中狀態時，將此 Shell 腳本渲染到終端機狀態列"
+    "statuslineHint": "當此設定檔處於使用中狀態時，將此 Shell 腳本渲染到終端機狀態列",
+    "variables": "變數",
+    "variablesHint": "這些值將被替換至此設定檔的 settings.json / statusline 範本中的 ${VAR} 佔位符。",
+    "varKey": "鍵",
+    "varValue": "值",
+    "addVar": "新增變數",
+    "appliedFiles": "已套用的檔案"
   }
 }

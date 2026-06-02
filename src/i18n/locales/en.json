@@ -2760,6 +2760,12 @@
     "settingsFragment": "settings.json fragment",
     "settingsFragmentHint": "JSON fragment deep-merged on top of the provider settings",
     "statusline": "statusline.sh",
-    "statuslineHint": "Shell script rendered into the terminal statusline when this profile is active"
+    "statuslineHint": "Shell script rendered into the terminal statusline when this profile is active",
+    "variables": "Variables",
+    "variablesHint": "Values substituted into ${VAR} placeholders in this profile's settings.json / statusline templates.",
+    "varKey": "Key",
+    "varValue": "Value",
+    "addVar": "Add Variable",
+    "appliedFiles": "Applied Files"
   }
 }

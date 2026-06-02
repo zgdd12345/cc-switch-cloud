@@ -668,6 +668,231 @@ base_url = "http://localhost:8080"
         );
     }
 
+    /// CRITICAL (3b-1): when the active-profile settings.json fragment contains a
+    /// `${VAR}` that resolves to a real secret, the switch backfill must strip the
+    /// RENDERED fragment — not the literal template — so the secret never bleeds into
+    /// the outgoing provider's settings_config DB row. This is the regression guard
+    /// for the literal-parse bug: stripping the literal `${SECRET}` would leave the
+    /// rendered `sk-real-SECRET-123` leaf unmatched and capture it into P.
+    #[test]
+    #[serial]
+    fn provider_settings_config_not_polluted_by_rendered_var_fragment_on_backfill() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        // Provider P (current) and provider Q (switch target).
+        let provider_p = Provider::with_id(
+            "P".into(),
+            "Claude P".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-p" } }),
+            None,
+        );
+        let provider_q = Provider::with_id(
+            "Q".into(),
+            "Claude Q".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-q" } }),
+            None,
+        );
+        db.save_provider("claude", &provider_p)
+            .expect("save provider P");
+        db.save_provider("claude", &provider_q)
+            .expect("save provider Q");
+        db.set_current_provider("claude", "P")
+            .expect("set current provider P");
+        crate::settings::set_current_provider(&AppType::Claude, Some("P"))
+            .expect("set local current provider P");
+
+        // Active profile defines SECRET=sk-real-SECRET-123 and a fragment that
+        // references it via `${SECRET}`. The forward pass writes the RENDERED value
+        // to disk; the backfill strip must re-render to match it.
+        let mut vars = serde_json::Map::new();
+        vars.insert(
+            "SECRET".into(),
+            serde_json::Value::String("sk-real-SECRET-123".into()),
+        );
+        let profile = crate::app_config::Profile {
+            id: "prof:p".into(),
+            app_type: "claude".into(),
+            name: "prof:p".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: crate::app_config::ProfileSpec {
+                vars,
+                ..Default::default()
+            },
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+        db.set_active_profile("claude", "prof:p")
+            .expect("set active profile");
+        db.set_profile_dotfile(
+            "prof:p",
+            "settings.json",
+            r#"{"extraField":{"leak":"${SECRET}"}}"#,
+        )
+        .expect("set profile dotfile");
+
+        // Write live settings for P; this merges the RENDERED fragment onto disk
+        // (extraField.leak = "sk-real-SECRET-123").
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &provider_p)
+            .expect("write live for P");
+
+        let original_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists");
+        let original_p_config = original_p.settings_config.clone();
+        assert!(
+            original_p_config.get("extraField").is_none(),
+            "precondition: P must not contain extraField before the switch"
+        );
+
+        // Switch to Q -> backfill re-captures live into P; the rendered fragment must
+        // be stripped, leaving P byte-identical and free of the secret.
+        ProviderService::switch(&state, AppType::Claude, "Q").expect("switch to Q");
+
+        let reloaded_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after switch")
+            .expect("P exists after switch");
+        assert_eq!(
+            reloaded_p.settings_config, original_p_config,
+            "P.settings_config must be JSON-identical to original (no rendered fragment bleed)"
+        );
+        assert!(
+            reloaded_p.settings_config.get("extraField").is_none(),
+            "rendered ${{SECRET}} fragment must not bleed into provider P"
+        );
+        let serialized = serde_json::to_string(&reloaded_p.settings_config)
+            .expect("serialize P settings_config");
+        assert!(
+            !serialized.contains("sk-real-SECRET-123"),
+            "the rendered secret must never appear in P.settings_config: {serialized}"
+        );
+    }
+
+    /// CRITICAL (3b-2 T3): the rendered fragment must be stripped on backfill even when
+    /// the `${VAR}` resolves from the active PROVIDER's `env` (layer 2 of the var map),
+    /// not just from `spec.vars`. Provider P owns env.ANTHROPIC_AUTH_TOKEN="sk-x"; the
+    /// active profile fragment is `{"env":{"X":"${ANTHROPIC_AUTH_TOKEN}"}}`, so the forward
+    /// pass writes env.X="sk-x" to disk. Stripping the LITERAL `${ANTHROPIC_AUTH_TOKEN}`
+    /// would leave the rendered "sk-x" leaf unmatched, bleeding the secret into P's
+    /// settings_config. The backfill must re-render (provider still current at backfill
+    /// time) and strip env.X. Asserts P stays byte-identical and free of "sk-x".
+    #[test]
+    #[serial]
+    fn rendered_fragment_not_polluting_provider_on_backfill() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        // Provider P owns the secret in its own env; the fragment references it via
+        // `${ANTHROPIC_AUTH_TOKEN}`. Q is the switch target.
+        let provider_p = Provider::with_id(
+            "P".into(),
+            "Claude P".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk-x" } }),
+            None,
+        );
+        let provider_q = Provider::with_id(
+            "Q".into(),
+            "Claude Q".into(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "tok-q" } }),
+            None,
+        );
+        db.save_provider("claude", &provider_p)
+            .expect("save provider P");
+        db.save_provider("claude", &provider_q)
+            .expect("save provider Q");
+        db.set_current_provider("claude", "P")
+            .expect("set current provider P");
+        crate::settings::set_current_provider(&AppType::Claude, Some("P"))
+            .expect("set local current provider P");
+
+        // Active profile fragment splices the provider's own token via `${VAR}` into a
+        // fragment-exclusive key. NOTE: no spec.vars — resolution comes from provider env.
+        let profile = crate::app_config::Profile {
+            id: "prof:p".into(),
+            app_type: "claude".into(),
+            name: "prof:p".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: Default::default(),
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+        db.set_active_profile("claude", "prof:p")
+            .expect("set active profile");
+        db.set_profile_dotfile(
+            "prof:p",
+            "settings.json",
+            r#"{"env":{"X":"${ANTHROPIC_AUTH_TOKEN}"}}"#,
+        )
+        .expect("set profile dotfile");
+
+        // Materialize live for P; this renders env.X="sk-x" and merges it onto disk.
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &provider_p)
+            .expect("write live for P");
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live settings");
+        assert_eq!(
+            live["env"]["X"],
+            json!("sk-x"),
+            "precondition: forward pass must render env.X to the resolved token on disk"
+        );
+
+        let original_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists");
+        let original_p_config = original_p.settings_config.clone();
+        assert!(
+            original_p_config
+                .get("env")
+                .and_then(|e| e.get("X"))
+                .is_none(),
+            "precondition: P must not contain env.X before the switch"
+        );
+
+        // Switch to Q -> backfill re-captures live into P; the rendered fragment must be
+        // stripped (env.X removed), leaving P byte-identical and free of the secret.
+        ProviderService::switch(&state, AppType::Claude, "Q").expect("switch to Q");
+
+        let reloaded_p = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after switch")
+            .expect("P exists after switch");
+        assert_eq!(
+            reloaded_p.settings_config, original_p_config,
+            "P.settings_config must be JSON-identical to original (no env.X, no rendered token bleed)"
+        );
+        assert!(
+            reloaded_p
+                .settings_config
+                .get("env")
+                .and_then(|e| e.get("X"))
+                .is_none(),
+            "rendered ${{ANTHROPIC_AUTH_TOKEN}} fragment (env.X) must not bleed into provider P"
+        );
+        // P legitimately OWNS env.ANTHROPIC_AUTH_TOKEN="sk-x"; the bleed we guard against is
+        // the rendered token leaking through the fragment-exclusive env.X key. Assert the
+        // env object is EXACTLY the single owned entry — i.e. "sk-x" appears once (the owned
+        // token), never duplicated into env.X by an un-rendered literal strip.
+        assert_eq!(
+            reloaded_p.settings_config.get("env"),
+            Some(&json!({ "ANTHROPIC_AUTH_TOKEN": "sk-x" })),
+            "P.env must be exactly its owned token, with no rendered-fragment env.X bleed"
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[tokio::test]
     #[serial]
@@ -1785,8 +2010,16 @@ impl ProviderService {
             )
             .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
-            // Note: No Live config write, no MCP sync
-            // The proxy server will route requests to the new provider via is_current
+            // Note: No Live config write, no MCP sync.
+            // The proxy server routes requests to the new provider via is_current.
+            //
+            // 3b-2 T3 (profile fragments): proxy hot-switch returns early here, so it
+            // performs NEITHER the backfill reverse-strip NOR the forward
+            // write_live_with_common_config that applies the active profile's
+            // settings.json fragment. Consequently, in proxy-takeover mode profile
+            // `${VAR}` fragments are neither materialized to live nor reverse-stripped on
+            // switch — so there is no rendered-fragment bleed path here, but there is also
+            // no fragment application (the proxy owns the live config). Known limitation.
             return Ok(SwitchResult::default());
         }
 

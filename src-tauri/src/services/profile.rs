@@ -205,12 +205,24 @@ impl ProfileService {
                         .cloned()
                 })
                 .flatten();
+            // 3b-2: 在写盘前渲染整文件 dotfile（如 statusline.sh）中的 `${VAR}`（shell
+            // 文本，不做 JSON 转义），warnings 透出到 result.warnings。`profile` 是步骤 1
+            // 已加载的 INCOMING profile。content_hash 现在基于「已渲染」字节计算 —— 归属
+            // 检测仍成立，因为变量不变时重复激活会渲染出相同字节。CLAUDE.md 仍被跳过（3b-3）。
+            let rendered = crate::services::profile_vars::render_with_profile_vars(
+                state.db.as_ref(),
+                &app_type,
+                &profile,
+                &df.content,
+                /*json_escape=*/ false,
+                &mut result.warnings,
+            )?;
             match render_whole_file(
                 state.db.as_ref(),
                 profile_id,
                 &app_type,
                 &df.rel_path,
-                &df.content,
+                &rendered,
                 prior_owned_hash.as_deref(),
             ) {
                 Ok(Some(entry)) => {
@@ -1032,6 +1044,231 @@ mod tests {
                 .iter()
                 .any(|r| r.target_path.ends_with("settings.json")),
             "settings.json must NOT be tracked as a whole_file: {rows:?}"
+        );
+    }
+
+    // ========== 3b-2 T2: ${VAR} render on activate (settings.json + statusline) ==========
+
+    /// 构造一个带 `vars` 的 profile（其余字段同 `profile()` 助手）。
+    fn profile_with_vars(id: &str, provider: Option<&str>, vars: &[(&str, &str)]) -> Profile {
+        let mut p = profile(id, content(&[], &[], &[], &[]), provider);
+        for (k, v) in vars {
+            p.spec.vars.insert((*k).to_string(), json!(*v));
+        }
+        p
+    }
+
+    /// settings.json 片段中的 `${VAR}` 应被 profile var 渲染后再 merge。
+    #[test]
+    #[serial]
+    fn activate_renders_settings_fragment_var() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        let p = profile_with_vars("p1", Some("prov"), &[("GREETING", "hi")]);
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile(
+            "p1",
+            "settings.json",
+            r#"{"statusLine":{"msg":"${GREETING}"}}"#,
+        )
+        .expect("set settings.json fragment");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let settings_path = home.claude_dir().join("settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(settings["statusLine"]["msg"], json!("hi"));
+    }
+
+    /// statusline.sh 中的 `${VAR}` 应被 profile var 渲染（无 JSON 转义）。
+    #[test]
+    #[serial]
+    fn activate_renders_statusline_var() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        let p = profile_with_vars("p1", Some("prov"), &[("NAME", "alba")]);
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "statusline.sh", "echo ${NAME}")
+            .expect("set statusline.sh");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let statusline = home.claude_dir().join("statusline.sh");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "echo alba");
+    }
+
+    /// provider env 的变量（无同名 profile var）应在 settings.json 片段中解析。
+    #[test]
+    #[serial]
+    fn provider_env_resolves_in_fragment() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // claude_provider 的 env.ANTHROPIC_MODEL == "model-x".
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        let p = profile("p1", content(&[], &[], &[], &[]), Some("prov"));
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "settings.json", r#"{"model":"${ANTHROPIC_MODEL}"}"#)
+            .expect("set settings.json fragment");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let settings_path = home.claude_dir().join("settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(settings["model"], json!("model-x"));
+    }
+
+    /// 同名时 profile var 覆盖 provider env。
+    #[test]
+    #[serial]
+    fn profile_var_overrides_provider_env() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // provider env.ANTHROPIC_MODEL == "model-x" (provider 层).
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        // profile var 同名覆盖为 "prof".
+        let p = profile_with_vars("p1", Some("prov"), &[("ANTHROPIC_MODEL", "prof")]);
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "settings.json", r#"{"model":"${ANTHROPIC_MODEL}"}"#)
+            .expect("set settings.json fragment");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let settings_path = home.claude_dir().join("settings.json");
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(settings["model"], json!("prof"));
+    }
+
+    /// SAME-PROVIDER no-bleed (3b-2 T3): profiles A and B BOTH pin provider P with
+    /// DIFFERENT settings.json fragments. Activating A then B drives
+    /// `ProviderService::switch(state, P)` twice; because `current_id == id == P`,
+    /// `switch_normal` takes the no-backfill branch (`if current_id != id`), so the
+    /// outgoing fragment is never re-captured into P and cannot bleed. The forward
+    /// step-8 deterministic rebuild (active is now B) re-renders P + B's fragment, so
+    /// live settings.json reflects B (not A). Asserts P.settings_config is unchanged
+    /// across both activations AND live carries B's fragment, not A's.
+    ///
+    /// (Confirms the no-backfill => no-bleed reasoning: a same-provider switch never
+    /// reverse-strips, so there is no rendered-fragment leak path on this branch.)
+    #[test]
+    #[serial]
+    fn same_provider_switch_no_bleed() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // Single provider P; capture its stored config as the immutable baseline.
+        db.save_provider("claude", &claude_provider("P"))
+            .expect("save provider P");
+        let original_p_config = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P")
+            .expect("P exists")
+            .settings_config
+            .clone();
+
+        // Two profiles, both pinned to P, with DIFFERENT fragment-exclusive keys.
+        let a = profile("A", content(&[], &[], &[], &[]), Some("P"));
+        let b = profile("B", content(&[], &[], &[], &[]), Some("P"));
+        db.save_profile(&a).expect("save profile A");
+        db.save_profile(&b).expect("save profile B");
+        db.set_profile_dotfile("A", "settings.json", r#"{"statusLine":{"who":"A"}}"#)
+            .expect("set A fragment");
+        db.set_profile_dotfile("B", "settings.json", r#"{"statusLine":{"who":"B"}}"#)
+            .expect("set B fragment");
+
+        // Activate A (switch to P, then activate B (switch P->P: same provider).
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        let after_a = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after A")
+            .expect("P exists")
+            .settings_config
+            .clone();
+        assert_eq!(
+            after_a, original_p_config,
+            "P.settings_config must be unchanged after activating A (forward-only, no bleed)"
+        );
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+        let after_b = db
+            .get_provider_by_id("P", "claude")
+            .expect("get P after B")
+            .expect("P exists")
+            .settings_config
+            .clone();
+        assert_eq!(
+            after_b, original_p_config,
+            "P.settings_config must be unchanged after same-provider switch A->B \
+             (no-backfill branch => no fragment bleed)"
+        );
+
+        // Live settings.json must reflect B's fragment, NOT A's: step-8 forward rebuild
+        // re-renders with active=B, so A's statusLine is overwritten by B's.
+        let settings_path = home.claude_dir().join("settings.json");
+        let live: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        assert_eq!(
+            live["statusLine"]["who"],
+            json!("B"),
+            "live settings.json must reflect the incoming (B) fragment after same-provider switch: {live}"
+        );
+        assert_eq!(
+            live["env"]["ANTHROPIC_API_KEY"],
+            json!("token-P"),
+            "provider P env must remain present in live settings: {live}"
+        );
+    }
+
+    /// 未知变量在 statusline 中保留字面量并在 warnings 中提及。
+    #[test]
+    #[serial]
+    fn unknown_var_kept_literal_with_warning() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        let p = profile("p1", content(&[], &[], &[], &[]), Some("prov"));
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "statusline.sh", "x ${MISSING}")
+            .expect("set statusline.sh");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let statusline = home.claude_dir().join("statusline.sh");
+        assert_eq!(fs::read_to_string(&statusline).unwrap(), "x ${MISSING}");
+        assert!(
+            res.warnings.iter().any(|w| w.contains("MISSING")),
+            "warnings should mention MISSING: {res:?}"
         );
     }
 

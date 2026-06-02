@@ -16,6 +16,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
+const createMockFn = vi.fn().mockResolvedValue({});
 const updateMock = vi.fn().mockResolvedValue({});
 const setDotfileMock = vi.fn().mockResolvedValue({});
 const deleteDotfileMock = vi.fn().mockResolvedValue(true);
@@ -25,7 +26,7 @@ let dotfilesData: { profileId: string; relPath: string; content: string }[] =
 
 vi.mock("@/hooks/useProfiles", () => ({
   useCreateProfile: () => ({
-    mutateAsync: vi.fn().mockResolvedValue({}),
+    mutateAsync: createMockFn,
     isPending: false,
   }),
   useUpdateProfile: () => ({
@@ -42,6 +43,9 @@ vi.mock("@/hooks/useProfiles", () => ({
   useDeleteProfileDotfile: () => ({
     mutateAsync: deleteDotfileMock,
     isPending: false,
+  }),
+  useProfileManifest: () => ({
+    data: [],
   }),
 }));
 
@@ -76,6 +80,7 @@ const EDIT_PROFILE: InstalledProfile = {
 describe("ProfileEditDialog", () => {
   beforeEach(() => {
     dotfilesData = [];
+    createMockFn.mockClear();
     updateMock.mockClear();
     setDotfileMock.mockClear();
     deleteDotfileMock.mockClear();
@@ -242,6 +247,130 @@ describe("ProfileEditDialog", () => {
         expect.objectContaining({
           id: EDIT_PROFILE.id,
           relPath: "statusline.sh",
+        }),
+      );
+    });
+  });
+
+  // ---- Variables editor tests ----
+
+  it("renders the Variables collapsible section in both create and edit mode", () => {
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={null}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("profiles.variables")).toBeInTheDocument();
+  });
+
+  it("add-row button adds a key/value input pair", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={null}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Expand the Variables section
+    await user.click(screen.getByText("profiles.variables"));
+
+    // Initially no key inputs
+    expect(screen.queryAllByPlaceholderText("profiles.varKey")).toHaveLength(0);
+
+    // Click Add Variable
+    await user.click(screen.getByText("profiles.addVar"));
+
+    // Now one pair should appear
+    expect(screen.getAllByPlaceholderText("profiles.varKey")).toHaveLength(1);
+    expect(screen.getAllByPlaceholderText("profiles.varValue")).toHaveLength(1);
+  });
+
+  it("Save includes vars in the spec passed to create mutation", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={null}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Fill required name field
+    const nameInput = screen.getByPlaceholderText("profiles.namePlaceholder");
+    await user.type(nameInput, "My Profile");
+
+    // Expand Variables and add a row
+    await user.click(screen.getByText("profiles.variables"));
+    await user.click(screen.getByText("profiles.addVar"));
+
+    const keyInput = screen.getByPlaceholderText("profiles.varKey");
+    const valInput = screen.getByPlaceholderText("profiles.varValue");
+
+    fireEvent.change(keyInput, { target: { value: "MY_VAR" } });
+    fireEvent.change(valInput, { target: { value: "hello" } });
+
+    // Submit
+    await user.click(screen.getByText("profiles.save"));
+
+    await waitFor(() => {
+      expect(createMockFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spec: expect.objectContaining({
+            vars: expect.objectContaining({ MY_VAR: "hello" }),
+          }),
+        }),
+      );
+    });
+  });
+
+  it("Save includes vars in the spec passed to update mutation", async () => {
+    const profileWithVars: InstalledProfile = {
+      ...EDIT_PROFILE,
+      spec: {
+        content: { skills: [], commands: [], agents: [], mcp: [] },
+        vars: { EXISTING: "old" },
+      },
+    };
+
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={profileWithVars}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Expand Variables — EXISTING row should be pre-filled
+    await user.click(screen.getByText("profiles.variables"));
+
+    const valInputs = screen.getAllByPlaceholderText("profiles.varValue");
+    expect(valInputs).toHaveLength(1);
+    expect((valInputs[0] as HTMLInputElement).value).toBe("old");
+
+    // Update the value
+    fireEvent.change(valInputs[0], { target: { value: "new" } });
+
+    // Submit
+    await user.click(screen.getByText("profiles.save"));
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spec: expect.objectContaining({
+            vars: expect.objectContaining({ EXISTING: "new" }),
+          }),
         }),
       );
     });

@@ -33,6 +33,17 @@ export interface ProfileDotfile {
   content: string;
 }
 
+export interface ManifestEntry {
+  id: number;
+  channel: string;
+  profileId?: string;
+  appType: string;
+  targetPath: string;
+  kind: string;
+  contentHash?: string;
+  createdAt: number;
+}
+
 // ========== API ==========
 
 export const profilesApi = {
@@ -106,12 +117,21 @@ export const profilesApi = {
   },
 
   /** Set (upsert) a dotfile for a profile */
-  async setDotfile(id: string, relPath: string, content: string): Promise<void> {
+  async setDotfile(
+    id: string,
+    relPath: string,
+    content: string,
+  ): Promise<void> {
     await invoke("set_profile_dotfile", { id, relPath, content });
   },
 
   /** Delete a dotfile for a profile; returns true if it existed */
   async deleteDotfile(id: string, relPath: string): Promise<boolean> {
     return await invoke("delete_profile_dotfile", { id, relPath });
+  },
+
+  /** Get the applied-files manifest for a profile */
+  async getManifest(id: string, app: string): Promise<ManifestEntry[]> {
+    return await invoke("get_profile_manifest", { id, app });
   },
 };
