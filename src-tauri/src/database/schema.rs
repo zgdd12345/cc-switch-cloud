@@ -133,6 +133,54 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 6c. Profiles 表（schema v13）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+        id                  TEXT PRIMARY KEY,
+        app_type            TEXT NOT NULL,
+        name                TEXT NOT NULL,
+        description         TEXT,
+        is_active           BOOLEAN NOT NULL DEFAULT 0,
+        current_provider_id TEXT,
+        spec                TEXT NOT NULL DEFAULT '{}',
+        sort_index          INTEGER NOT NULL DEFAULT 0,
+        created_at          INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (app_type, name),
+        FOREIGN KEY (current_provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE SET NULL
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6d. Profile Dotfiles 表（schema v13，3a 中未使用）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profile_dotfiles (
+        profile_id TEXT NOT NULL,
+        rel_path   TEXT NOT NULL,
+        content    TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (profile_id, rel_path),
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6e. Apply Manifest 表（schema v13，3a 中未使用）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS apply_manifest (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel     TEXT NOT NULL DEFAULT 'global',
+        profile_id  TEXT,
+        app_type    TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        created_at  INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 7. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
@@ -470,6 +518,11 @@ impl Database {
                         log::info!("迁移数据库从 v11 到 v12（添加 agents 表）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("migrating db v12 -> v13 (add profiles tables)");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1277,6 +1330,57 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("v11 -> v12 迁移完成：已添加 agents 表");
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：添加 profiles / profile_dotfiles / apply_manifest 表
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+        id                  TEXT PRIMARY KEY,
+        app_type            TEXT NOT NULL,
+        name                TEXT NOT NULL,
+        description         TEXT,
+        is_active           BOOLEAN NOT NULL DEFAULT 0,
+        current_provider_id TEXT,
+        spec                TEXT NOT NULL DEFAULT '{}',
+        sort_index          INTEGER NOT NULL DEFAULT 0,
+        created_at          INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (app_type, name),
+        FOREIGN KEY (current_provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE SET NULL
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profile_dotfiles (
+        profile_id TEXT NOT NULL,
+        rel_path   TEXT NOT NULL,
+        content    TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (profile_id, rel_path),
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS apply_manifest (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel     TEXT NOT NULL DEFAULT 'global',
+        profile_id  TEXT,
+        app_type    TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        created_at  INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("v12 -> v13 migration done: profiles / profile_dotfiles / apply_manifest");
         Ok(())
     }
 

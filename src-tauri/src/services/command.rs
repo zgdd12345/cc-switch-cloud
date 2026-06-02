@@ -208,8 +208,7 @@ impl CommandService {
     /// **绝不**枚举目录后删除未知文件，因此用户自己放进 commands 目录的 `.md`
     /// 文件天然不受影响。
     ///
-    /// TODO(increment 3)：在 app setup 启动时调用，以确保磁盘与 DB 一致。
-    #[allow(dead_code)]
+    /// 由 ProfileService::activate 在翻转启用面后调用，以确保磁盘与 DB 一致。
     pub fn reconcile(&self) -> Result<(), AppError> {
         let commands = self.db.get_all_installed_commands()?;
         for command in &commands {

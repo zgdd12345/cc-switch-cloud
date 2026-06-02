@@ -170,6 +170,28 @@ fn schema_migration_sets_user_version_when_missing() {
 }
 
 #[test]
+fn schema_migration_v12_to_v13_reaches_current() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 12).expect("seed v12");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version"),
+        SCHEMA_VERSION
+    );
+    for t in ["profiles", "profile_dotfiles", "apply_manifest"] {
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [t],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(n, 1, "table {t} must exist after migration");
+    }
+}
+
+#[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
@@ -774,5 +796,44 @@ fn fresh_db_has_agents_table() -> Result<(), AppError> {
         |r| r.get(0),
     )?;
     assert_eq!(n, 1, "agents table must exist on a fresh DB");
+    Ok(())
+}
+
+#[test]
+fn fresh_db_has_profiles_table() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='profiles'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(n, 1, "profiles table must exist on a fresh DB");
+    Ok(())
+}
+
+#[test]
+fn fresh_db_has_profile_dotfiles_table() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='profile_dotfiles'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(n, 1, "profile_dotfiles table must exist on a fresh DB");
+    Ok(())
+}
+
+#[test]
+fn fresh_db_has_apply_manifest_table() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    let n: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='apply_manifest'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(n, 1, "apply_manifest table must exist on a fresh DB");
     Ok(())
 }

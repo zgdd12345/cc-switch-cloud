@@ -244,6 +244,49 @@ pub struct InstalledAgent {
     pub installed_at: i64,
 }
 
+/// Profile content: skills/commands/agents/mcp pinned to a profile
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProfileContent {
+    #[serde(default)]
+    pub skills: Vec<String>, // literal skill.directory
+    #[serde(default)]
+    pub commands: Vec<String>, // literal command.name
+    #[serde(default)]
+    pub agents: Vec<String>, // literal agent.name
+    #[serde(default)]
+    pub mcp: Vec<String>, // literal mcp server id
+}
+
+/// Profile spec: content + reserved vars for 3b variable templating
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProfileSpec {
+    #[serde(default)]
+    pub content: ProfileContent,
+    #[serde(default)]
+    pub vars: serde_json::Map<String, serde_json::Value>, // reserved for 3b variable templating
+}
+
+/// A named profile grouping skills/commands/agents/mcp for a specific app
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub app_type: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_id: Option<String>,
+    #[serde(default)]
+    pub spec: ProfileSpec,
+    #[serde(default)]
+    pub sort_index: i64,
+    #[serde(default)]
+    pub created_at: i64,
+}
+
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

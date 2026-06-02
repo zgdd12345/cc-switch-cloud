@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use agenthub_lib::{
     get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
-    Provider, ProviderMeta,
+    Provider,
 };
 
 #[path = "support.rs"]
@@ -1039,7 +1039,7 @@ fn sync_gemini_google_official_sets_oauth_security() {
             .get_manager_mut(&AppType::Gemini)
             .expect("gemini manager");
         manager.current = "google-official".to_string();
-        let mut provider = Provider::with_id(
+        let provider = Provider::with_id(
             "google-official".to_string(),
             "Google".to_string(),
             json!({

@@ -28,6 +28,7 @@ import {
   Cpu,
   LayoutDashboard,
   Terminal,
+  Layers,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -92,6 +93,7 @@ import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 import CommandsPanel from "@/components/commands/CommandsPanel";
+import ProfilesPanel from "@/components/profiles/ProfilesPanel";
 
 type View =
   | "providers"
@@ -108,7 +110,8 @@ type View =
   | "openclawTools"
   | "openclawAgents"
   | "hermesMemory"
-  | "commands";
+  | "commands"
+  | "profiles";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -155,6 +158,7 @@ const VALID_VIEWS: View[] = [
   "openclawAgents",
   "hermesMemory",
   "commands",
+  "profiles",
 ];
 
 const getInitialView = (): View => {
@@ -251,6 +255,7 @@ function App() {
   const unifiedSkillsPanelRef = useRef<any>(null);
   const commandsPanelRef = useRef<any>(null);
   const agentsPanelRef = useRef<any>(null);
+  const profilesPanelRef = useRef<any>(null);
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -923,9 +928,9 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         case "commands":
-          return (
-            <CommandsPanel ref={commandsPanelRef} currentApp="claude" />
-          );
+          return <CommandsPanel ref={commandsPanelRef} currentApp="claude" />;
+        case "profiles":
+          return <ProfilesPanel ref={profilesPanelRef} currentApp="claude" />;
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -1149,6 +1154,7 @@ function App() {
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                   {currentView === "commands" && t("commands.title")}
+                  {currentView === "profiles" && t("profiles.title")}
                 </h1>
               </div>
             ) : (
@@ -1250,6 +1256,17 @@ function App() {
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     {t("agents.create")}
+                  </Button>
+                )}
+                {currentView === "profiles" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => profilesPanelRef.current?.openCreate()}
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("profiles.create")}
                   </Button>
                 )}
                 {currentView === "prompts" && (
@@ -1544,6 +1561,15 @@ function App() {
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("profiles")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("profiles.manage")}
+                              >
+                                <Layers className="w-4 h-4" />
                               </Button>
                             </>
                           )}

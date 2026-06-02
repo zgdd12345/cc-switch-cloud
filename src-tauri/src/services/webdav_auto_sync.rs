@@ -54,6 +54,8 @@ pub fn should_trigger_for_table(table: &str) -> bool {
             | "proxy_config"
             | "commands"
             | "agents"
+            | "profiles"
+            | "profile_dotfiles"
     )
 }
 
@@ -212,6 +214,11 @@ mod tests {
         assert!(should_trigger_for_table("settings"));
         assert!(!should_trigger_for_table("proxy_request_logs"));
         assert!(!should_trigger_for_table("provider_health"));
+        // profiles increment: declarative user config should sync across devices
+        assert!(should_trigger_for_table("profiles"));
+        assert!(should_trigger_for_table("profile_dotfiles"));
+        // apply_manifest is device-local realized state — must NOT trigger sync
+        assert!(!should_trigger_for_table("apply_manifest"));
     }
 
     #[test]
