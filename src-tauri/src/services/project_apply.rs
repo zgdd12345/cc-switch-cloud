@@ -254,6 +254,24 @@ impl ProjectApplyService {
                     .push(format!("project settings.json render: {w}"));
             }
             match serde_json::from_str::<serde_json::Value>(&rendered) {
+                Ok(frag) if !frag.is_object() => {
+                    // settings.json must be a JSON object. A non-object root
+                    // (array/string/number/bool/null) is an authoring error:
+                    // refuse it (warn, no write, no row) instead of letting
+                    // merge_with_snapshot's root-overwrite arm clobber the
+                    // user's entire settings.json.
+                    let ty = match frag {
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "boolean",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => "array",
+                        serde_json::Value::Object(_) => "object",
+                    };
+                    result.warnings.push(format!(
+                        "project settings.json fragment must be a JSON object, got {ty}; skipping"
+                    ));
+                }
                 Ok(frag) => {
                     // Load current disk as Option<Value> (None == skip-the-merge
                     // sentinel; NOT Value::Null — a valid on-disk `null` must not be
@@ -1376,6 +1394,49 @@ mod tests {
                 .any(|r| r.kind == "settings_merge"),
             "no row when disk skip"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_non_object_fragment_warns_and_writes_no_file_no_row() {
+        // A fragment whose ROOT is a non-object (array, string, ...) must be
+        // REFUSED: warn, do NOT clobber the user's settings.json, NO row.
+        for frag in [r#"[1,2,3]"#, r#""x""#] {
+            let home = TempHome::new();
+            crate::settings::reload_settings().ok();
+            let db = Arc::new(Database::memory().expect("db"));
+            let state = AppState::new(db.clone());
+            let (proj, canon) = merge_proj(home.home(), "merge-nonobj", frag);
+            db.save_project(&proj).expect("save");
+
+            // user already has a settings.json that must survive untouched.
+            let target = canon.join(".claude").join("settings.json");
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let original = br#"{"userKept": true}"#;
+            std::fs::write(&target, original).unwrap();
+
+            let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+            assert!(
+                res.warnings
+                    .iter()
+                    .any(|w| w.contains("must be a JSON object")),
+                "warns about non-object root for frag {frag:?}: {:?}",
+                res.warnings
+            );
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                original,
+                "user settings.json is byte-identical (not clobbered) for frag {frag:?}"
+            );
+            let chan = format!("project:{}", canon.to_string_lossy());
+            assert!(
+                !db.get_manifest_for_channel(&chan)
+                    .unwrap()
+                    .iter()
+                    .any(|r| r.kind == "settings_merge"),
+                "no settings_merge row for a non-object fragment {frag:?}"
+            );
+        }
     }
 
     #[test]
