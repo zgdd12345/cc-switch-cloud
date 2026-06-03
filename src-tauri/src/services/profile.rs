@@ -86,72 +86,65 @@ impl ProfileService {
         // ---- 3. 把 4 个启用面完全覆盖为 spec ----
         let content = &profile.spec.content;
 
+        // 选择器解析（3c）：每类 spec 条目支持字面量键 + `@tag`（大小写敏感）选择器。
+        // 字面量条目与 3a 行为完全一致（零回归）；`@tag` 展开为所有 tags 含该 tag 的键，
+        // 与字面量取并集。未知/空 @tag -> 零展开 + 可辨识警告（非错误）。
+
         // 3a. commands（键 = command.name）
-        let want_commands: HashSet<&str> = content.commands.iter().map(|s| s.as_str()).collect();
-        let mut matched_commands: HashSet<String> = HashSet::new();
-        for cmd in state.db.get_all_installed_commands()? {
-            let want = want_commands.contains(cmd.name.as_str());
-            state.db.set_command_enabled(&cmd.id, want)?;
-            if want {
-                matched_commands.insert(cmd.name.clone());
-            }
-        }
-        for name in &content.commands {
-            if !matched_commands.contains(name) {
-                result.warnings.push(format!("command not found: {name}"));
-            }
+        let cmds = state.db.get_all_installed_commands()?;
+        let items: Vec<(String, Vec<String>)> = cmds
+            .iter()
+            .map(|c| (c.name.clone(), c.tags.clone()))
+            .collect();
+        let (want, w) = Self::resolve_selectors("command", &content.commands, &items);
+        result.warnings.extend(w);
+        for c in &cmds {
+            state
+                .db
+                .set_command_enabled(&c.id, want.contains(&c.name))?;
         }
 
         // 3b. agents（键 = agent.name）
-        let want_agents: HashSet<&str> = content.agents.iter().map(|s| s.as_str()).collect();
-        let mut matched_agents: HashSet<String> = HashSet::new();
-        for agent in state.db.get_all_installed_agents()? {
-            let want = want_agents.contains(agent.name.as_str());
-            state.db.set_agent_enabled(&agent.id, want)?;
-            if want {
-                matched_agents.insert(agent.name.clone());
-            }
-        }
-        for name in &content.agents {
-            if !matched_agents.contains(name) {
-                result.warnings.push(format!("agent not found: {name}"));
-            }
+        let agents = state.db.get_all_installed_agents()?;
+        let items: Vec<(String, Vec<String>)> = agents
+            .iter()
+            .map(|a| (a.name.clone(), a.tags.clone()))
+            .collect();
+        let (want, w) = Self::resolve_selectors("agent", &content.agents, &items);
+        result.warnings.extend(w);
+        for a in &agents {
+            state.db.set_agent_enabled(&a.id, want.contains(&a.name))?;
         }
 
         // 3c. skills（per-app，键 = skill.directory；只触碰本 app_type 标志位）
-        let want_skills: HashSet<&str> = content.skills.iter().map(|s| s.as_str()).collect();
-        let mut matched_skills: HashSet<String> = HashSet::new();
-        for skill in state.db.get_all_installed_skills()?.values() {
-            let want = want_skills.contains(skill.directory.as_str());
+        let skills = state.db.get_all_installed_skills()?;
+        let items: Vec<(String, Vec<String>)> = skills
+            .values()
+            .map(|s| (s.directory.clone(), s.tags.clone()))
+            .collect();
+        let (want, w) = Self::resolve_selectors("skill", &content.skills, &items);
+        result.warnings.extend(w);
+        for skill in skills.values() {
             let mut apps = skill.apps.clone();
-            apps.set_enabled_for(&app_type, want);
+            apps.set_enabled_for(&app_type, want.contains(&skill.directory));
             state.db.update_skill_apps(&skill.id, &apps)?;
-            if want {
-                matched_skills.insert(skill.directory.clone());
-            }
-        }
-        for dir in &content.skills {
-            if !matched_skills.contains(dir) {
-                result.warnings.push(format!("skill not found: {dir}"));
-            }
         }
 
-        // 3d. mcp（per-app，键 = server id；只触碰本 app_type 标志位）
-        let want_mcp: HashSet<&str> = content.mcp.iter().map(|s| s.as_str()).collect();
-        let mut matched_mcp: HashSet<String> = HashSet::new();
+        // 3d. mcp（per-app，键 = server id；只触碰本 app_type 标志位）。
+        // 先用对 servers map 的**不可变**借用构建 items + want（该借用到此结束），
+        // 再 values_mut() 翻转标志位 + save，避免借用检查冲突。
         let mut servers = state.db.get_all_mcp_servers()?;
+        let items: Vec<(String, Vec<String>)> = servers
+            .values()
+            .map(|s| (s.id.clone(), s.tags.clone()))
+            .collect();
+        let (want, w) = Self::resolve_selectors("mcp", &content.mcp, &items);
+        result.warnings.extend(w);
         for server in servers.values_mut() {
-            let want = want_mcp.contains(server.id.as_str());
-            server.apps.set_enabled_for(&app_type, want);
+            server
+                .apps
+                .set_enabled_for(&app_type, want.contains(&server.id));
             state.db.save_mcp_server(server)?;
-            if want {
-                matched_mcp.insert(server.id.clone());
-            }
-        }
-        for id in &content.mcp {
-            if !matched_mcp.contains(id) {
-                result.warnings.push(format!("mcp not found: {id}"));
-            }
         }
 
         // ---- 4. 协调器：每类一次，无条件，最后运行 ----
@@ -444,6 +437,48 @@ impl ProfileService {
             None => Ok(None),
         }
     }
+
+    /// Resolve a profile spec content list into a want-set of keys, collecting warnings.
+    ///
+    /// `items` = `(key, tags)` for every row of the content type
+    /// (key = directory / name / id). A spec entry beginning with `@` is a
+    /// **CASE-SENSITIVE** tag selector that expands to all keys whose tags contain the
+    /// tag; otherwise it is a literal key.
+    ///
+    /// Warnings are DISTINGUISHABLE: an unknown/empty tag yields
+    /// `"tag matched no {type_label}s: @{tag}"`, while a literal miss yields
+    /// `"{type_label} not found: {entry}"`. Neither is an error — the want-set simply
+    /// excludes the unmatched selector (zero expansion).
+    fn resolve_selectors(
+        type_label: &str,
+        spec: &[String],
+        items: &[(String, Vec<String>)],
+    ) -> (std::collections::HashSet<String>, Vec<String>) {
+        use std::collections::HashSet;
+        let mut want: HashSet<String> = HashSet::new();
+        let mut warnings = Vec::new();
+        for entry in spec {
+            if let Some(tag) = entry.strip_prefix('@') {
+                let matched: Vec<&String> = items
+                    .iter()
+                    .filter(|(_, tags)| tags.iter().any(|t| t == tag))
+                    .map(|(k, _)| k)
+                    .collect();
+                if matched.is_empty() {
+                    warnings.push(format!("tag matched no {type_label}s: @{tag}"));
+                } else {
+                    for k in matched {
+                        want.insert(k.clone());
+                    }
+                }
+            } else if items.iter().any(|(k, _)| k == entry) {
+                want.insert(entry.clone());
+            } else {
+                warnings.push(format!("{type_label} not found: {entry}"));
+            }
+        }
+        (want, warnings)
+    }
 }
 
 #[cfg(test)]
@@ -565,6 +600,7 @@ mod tests {
             installed_at: 1,
             content_hash: None,
             updated_at: 0,
+            tags: vec![],
         }
     }
 
@@ -1922,5 +1958,274 @@ mod tests {
             "A",
             "hidden row content must remain the template (no live-edit capture)"
         );
+    }
+
+    // ========== 3c T3: @tag selector resolution in activate ==========
+
+    /// 给命令打标签的小工具（在 `cmd` 基础上设置 tags）。
+    fn cmd_tagged(id: &str, name: &str, enabled: bool, tags: &[&str]) -> InstalledCommand {
+        let mut c = cmd(id, name, enabled);
+        c.tags = tags.iter().map(|t| t.to_string()).collect();
+        c
+    }
+
+    /// commands 名称 -> enabled_claude 的快照。
+    fn cmd_enabled_map(db: &Database) -> std::collections::HashMap<String, bool> {
+        db.get_all_installed_commands()
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.name, c.enabled_claude))
+            .collect()
+    }
+
+    /// 纯字面量（无 @）规格必须与 3a 行为完全一致：spec=[a,b] -> a,b 启用，c 禁用。
+    #[test]
+    #[serial]
+    fn activate_literal_only_unchanged() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        for c in [
+            cmd("c:a", "a", true),
+            cmd("c:b", "b", true),
+            cmd("c:c", "c", true),
+        ] {
+            db.save_command(&c).expect("save command");
+        }
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+        db.save_profile(&profile(
+            "p1",
+            content(&[], &["a", "b"], &[], &[]),
+            Some("prov"),
+        ))
+        .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(res.warnings.is_empty(), "no warnings expected: {res:?}");
+
+        let m = cmd_enabled_map(&db);
+        assert_eq!(m.get("a"), Some(&true));
+        assert_eq!(m.get("b"), Some(&true));
+        assert_eq!(m.get("c"), Some(&false));
+    }
+
+    /// `@x` 应展开为所有 tags 含 "x" 的命令：a,b(tagged x) 启用，c(无标签) 禁用。
+    #[test]
+    #[serial]
+    fn activate_tag_expands() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_command(&cmd_tagged("c:a", "a", false, &["x"]))
+            .expect("save");
+        db.save_command(&cmd_tagged("c:b", "b", false, &["x"]))
+            .expect("save");
+        db.save_command(&cmd_tagged("c:c", "c", true, &[]))
+            .expect("save");
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+        db.save_profile(&profile(
+            "p1",
+            content(&[], &["@x"], &[], &[]),
+            Some("prov"),
+        ))
+        .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(res.warnings.is_empty(), "no warnings expected: {res:?}");
+
+        let m = cmd_enabled_map(&db);
+        assert_eq!(m.get("a"), Some(&true));
+        assert_eq!(m.get("b"), Some(&true));
+        assert_eq!(m.get("c"), Some(&false));
+    }
+
+    /// 字面量与 @tag 取并集：spec=["c","@x"] -> a,b(via tag) + c(literal) 启用。
+    #[test]
+    #[serial]
+    fn activate_mixed_literal_and_tag() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_command(&cmd_tagged("c:a", "a", false, &["x"]))
+            .expect("save");
+        db.save_command(&cmd_tagged("c:b", "b", false, &["x"]))
+            .expect("save");
+        db.save_command(&cmd_tagged("c:c", "c", false, &[]))
+            .expect("save");
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+        db.save_profile(&profile(
+            "p1",
+            content(&[], &["c", "@x"], &[], &[]),
+            Some("prov"),
+        ))
+        .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(res.warnings.is_empty(), "no warnings expected: {res:?}");
+
+        let m = cmd_enabled_map(&db);
+        assert_eq!(m.get("a"), Some(&true));
+        assert_eq!(m.get("b"), Some(&true));
+        assert_eq!(m.get("c"), Some(&true));
+    }
+
+    /// 未知 @tag -> 零展开 + 可辨识的警告，activate 仍 Ok（绝不报错）。
+    #[test]
+    #[serial]
+    fn activate_unknown_tag_warns_not_error() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_command(&cmd_tagged("c:a", "a", true, &["x"]))
+            .expect("save");
+        db.save_profile(&profile("p1", content(&[], &["@nope"], &[], &[]), None))
+            .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate ok");
+        assert!(
+            res.warnings
+                .iter()
+                .any(|w| w == "tag matched no commands: @nope"),
+            "expected tag-miss warning: {res:?}"
+        );
+        let m = cmd_enabled_map(&db);
+        assert_eq!(m.get("a"), Some(&false), "no command should be enabled");
+    }
+
+    /// 字面量未命中 -> 警告文本与 tag-miss 可辨识区分。
+    #[test]
+    #[serial]
+    fn activate_literal_miss_warns_distinct() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_command(&cmd("c:a", "a", true)).expect("save");
+        db.save_profile(&profile("p1", content(&[], &["ghost"], &[], &[]), None))
+            .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(
+            res.warnings.iter().any(|w| w == "command not found: ghost"),
+            "expected literal-miss warning: {res:?}"
+        );
+        // distinguishable from tag-miss
+        assert!(
+            !res.warnings.iter().any(|w| w.starts_with("tag matched no")),
+            "literal miss must NOT emit a tag-miss warning: {res:?}"
+        );
+    }
+
+    /// @tag 大小写敏感：命令打 "X"，spec=["@x"] -> 不匹配（零展开 + tag-miss 警告）。
+    #[test]
+    #[serial]
+    fn activate_tag_case_sensitive() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_command(&cmd_tagged("c:a", "a", true, &["X"]))
+            .expect("save");
+        db.save_profile(&profile("p1", content(&[], &["@x"], &[], &[]), None))
+            .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(
+            res.warnings
+                .iter()
+                .any(|w| w == "tag matched no commands: @x"),
+            "case-sensitive miss should warn: {res:?}"
+        );
+        let m = cmd_enabled_map(&db);
+        assert_eq!(
+            m.get("a"),
+            Some(&false),
+            "uppercase-tagged a stays disabled"
+        );
+    }
+
+    /// skills（键=directory）与 mcp（键=id）也走 @tag，且只翻转当前 app_type 标志位。
+    #[test]
+    #[serial]
+    fn activate_tag_for_skills_and_mcp() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        // skill s1 tagged "team", claude=false codex=true; s2 untagged claude=true codex=true
+        let s1_apps = SkillApps {
+            claude: false,
+            codex: true,
+            ..Default::default()
+        };
+        let s2_apps = SkillApps {
+            claude: true,
+            codex: true,
+            ..Default::default()
+        };
+        let mut s1 = skill("sk:1", "s1", s1_apps);
+        s1.tags = vec!["team".to_string()];
+        db.save_skill(&s1).expect("save s1");
+        db.save_skill(&skill("sk:2", "s2", s2_apps))
+            .expect("save s2");
+        materialize_ssot_skill("s1");
+
+        // mcp m1 tagged "team", claude=false codex=true; m2 untagged claude=true codex=true
+        let m1_apps = McpApps {
+            claude: false,
+            codex: true,
+            ..Default::default()
+        };
+        let m2_apps = McpApps {
+            claude: true,
+            codex: true,
+            ..Default::default()
+        };
+        let mut m1 = mcp("m1", m1_apps);
+        m1.tags = vec!["team".to_string()];
+        db.save_mcp_server(&m1).expect("save m1");
+        db.save_mcp_server(&mcp("m2", m2_apps)).expect("save m2");
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+        db.save_profile(&profile(
+            "p1",
+            content(&["@team"], &[], &[], &["@team"]),
+            Some("prov"),
+        ))
+        .expect("save profile");
+
+        let res = ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+        assert!(res.warnings.is_empty(), "no warnings expected: {res:?}");
+
+        let skills = db.get_all_installed_skills().unwrap();
+        let s1 = skills.get("sk:1").unwrap();
+        let s2 = skills.get("sk:2").unwrap();
+        assert!(s1.apps.claude, "s1 claude enabled via @team");
+        assert!(!s2.apps.claude, "s2 claude disabled (not in tag set)");
+        assert!(s1.apps.codex, "s1 codex UNCHANGED");
+        assert!(s2.apps.codex, "s2 codex UNCHANGED");
+
+        let servers = db.get_all_mcp_servers().unwrap();
+        let m1 = servers.get("m1").unwrap();
+        let m2 = servers.get("m2").unwrap();
+        assert!(m1.apps.claude, "m1 claude enabled via @team");
+        assert!(!m2.apps.claude, "m2 claude disabled (not in tag set)");
+        assert!(m1.apps.codex, "m1 codex UNCHANGED");
+        assert!(m2.apps.codex, "m2 codex UNCHANGED");
     }
 }

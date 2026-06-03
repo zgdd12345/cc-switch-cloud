@@ -23,13 +23,15 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_hermes, installed_at, content_hash, updated_at
+                        enabled_hermes, installed_at, content_hash, updated_at, tags
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let skill_iter = stmt
             .query_map([], |row| {
+                let tags_str: String = row.get(16)?;
+                let tags = serde_json::from_str(&tags_str).unwrap_or_default();
                 Ok(InstalledSkill {
                     id: row.get(0)?,
                     name: row.get(1)?,
@@ -49,6 +51,7 @@ impl Database {
                     installed_at: row.get(13)?,
                     content_hash: row.get(14)?,
                     updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                    tags,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -68,12 +71,14 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_hermes, installed_at, content_hash, updated_at
+                        enabled_hermes, installed_at, content_hash, updated_at, tags
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let result = stmt.query_row([id], |row| {
+            let tags_str: String = row.get(16)?;
+            let tags = serde_json::from_str(&tags_str).unwrap_or_default();
             Ok(InstalledSkill {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -93,6 +98,7 @@ impl Database {
                 installed_at: row.get(13)?,
                 content_hash: row.get(14)?,
                 updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                tags,
             })
         });
 
@@ -105,13 +111,15 @@ impl Database {
 
     /// 保存 Skill（添加或更新）
     pub fn save_skill(&self, skill: &InstalledSkill) -> Result<(), AppError> {
+        let tags_json = serde_json::to_string(&skill.tags)
+            .map_err(|e| AppError::Database(format!("Failed to serialize tags: {e}")))?;
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              installed_at, content_hash, updated_at, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 skill.id,
                 skill.name,
@@ -129,7 +137,21 @@ impl Database {
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
+                tags_json,
             ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 更新 Skill 的标签列表
+    pub fn update_skill_tags(&self, id: &str, tags: &[String]) -> Result<(), AppError> {
+        let tags_json = serde_json::to_string(tags)
+            .map_err(|e| AppError::Database(format!("Failed to serialize tags: {e}")))?;
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE skills SET tags = ?2 WHERE id = ?1",
+            params![id, tags_json],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -259,5 +281,72 @@ impl Database {
             log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+
+    fn make_skill(id: &str, tags: Vec<String>) -> InstalledSkill {
+        InstalledSkill {
+            id: id.to_string(),
+            name: format!("Skill {id}"),
+            description: None,
+            directory: id.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+            tags,
+        }
+    }
+
+    #[test]
+    fn skill_tags_roundtrip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let skill = make_skill("local:s1", vec!["a".to_string(), "b".to_string()]);
+        db.save_skill(&skill)?;
+        let loaded = db
+            .get_installed_skill("local:s1")?
+            .expect("skill not found");
+        assert_eq!(loaded.tags, vec!["a".to_string(), "b".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn skill_update_tags() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let skill = make_skill("local:s2", vec!["a".to_string(), "b".to_string()]);
+        db.save_skill(&skill)?;
+        db.update_skill_tags("local:s2", &["c".to_string()])?;
+        let loaded = db
+            .get_installed_skill("local:s2")?
+            .expect("skill not found");
+        assert_eq!(loaded.tags, vec!["c".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn skill_empty_tags_roundtrip() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let skill = make_skill("local:s3", vec![]);
+        db.save_skill(&skill)?;
+        let loaded = db
+            .get_installed_skill("local:s3")?
+            .expect("skill not found");
+        assert_eq!(loaded.tags, Vec::<String>::new());
+        Ok(())
     }
 }

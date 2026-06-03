@@ -298,6 +298,22 @@ export function useCheckSkillUpdates() {
 }
 
 /**
+ * 更新 Skill 标签
+ * Rust command returns void; invalidate the installed cache so it re-fetches
+ * with up-to-date tags.
+ */
+export function useUpdateSkillTags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, tags }: { id: string; tags: string[] }) =>
+      skillsApi.updateSkillTags(id, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+/**
  * 更新单个 Skill
  */
 export function useUpdateSkill() {

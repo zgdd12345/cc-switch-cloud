@@ -97,6 +97,19 @@ pub fn toggle_skill_app(
     Ok(true)
 }
 
+/// 更新 Skill 的标签（纯元数据，不触发 SkillService 同步）
+#[tauri::command]
+pub fn update_skill_tags(
+    id: String,
+    tags: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .db
+        .update_skill_tags(&id, &tags)
+        .map_err(|e| e.to_string())
+}
+
 /// 扫描未管理的 Skills
 #[tauri::command]
 pub fn scan_unmanaged_skills(

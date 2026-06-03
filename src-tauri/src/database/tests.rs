@@ -897,6 +897,61 @@ fn prompts_has_hidden_after_migrate() {
 }
 
 #[test]
+fn skills_has_tags_after_migrate() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    // Seed a row representing a pre-v16 (v15) skills row. The v16 `tags` column
+    // carries DEFAULT '[]', so inserting without specifying it exercises the
+    // backfill/default path that the migration must guarantee for upgraded DBs.
+    conn.execute(
+        "INSERT INTO skills (id, name, directory) VALUES ('s1', 'Skill One', '/tmp/s1')",
+        [],
+    )
+    .expect("seed v15 skills row");
+
+    Database::set_user_version(&conn, 15).expect("seed v15");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version"),
+        SCHEMA_VERSION
+    );
+
+    // The v16 migration must add a `tags` column to skills.
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(skills);")
+        .expect("prepare pragma");
+    let mut rows = stmt.query([]).expect("query pragma");
+    let mut found = false;
+    while let Some(row) = rows.next().expect("read row") {
+        let column_name: String = row.get(1).expect("name");
+        if column_name == "tags" {
+            found = true;
+            break;
+        }
+    }
+    assert!(
+        found,
+        "skills must have a tags column after v15 -> v16 migration"
+    );
+
+    // Backfill assert: the pre-existing row must read back with an empty JSON
+    // array (the NOT NULL DEFAULT '[]'), i.e. an empty tags list. The DAO struct
+    // field + JSON decode is wired in T2; here we assert the stored column value
+    // directly to keep this task scoped to the column + migration.
+    let tags: String = conn
+        .query_row("SELECT tags FROM skills WHERE id = 's1'", [], |row| {
+            row.get(0)
+        })
+        .expect("read tags");
+    let decoded: Vec<String> = serde_json::from_str(&tags).expect("tags is valid JSON array");
+    assert!(
+        decoded.is_empty(),
+        "backfilled tags for a pre-v16 skills row must be an empty Vec, got {decoded:?}"
+    );
+}
+
+#[test]
 fn get_prompts_filters_hidden_but_with_hidden_sees_all() {
     let db = Database::memory().expect("create memory db");
 

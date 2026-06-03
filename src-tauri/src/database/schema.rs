@@ -98,7 +98,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            tags TEXT NOT NULL DEFAULT '[]'
         )",
             [],
         )
@@ -535,6 +536,11 @@ impl Database {
                         log::info!("migrating db v14 -> v15");
                         Self::migrate_v14_to_v15(conn)?;
                         Self::set_user_version(conn, 15)?;
+                    }
+                    15 => {
+                        log::info!("migrating db v15 -> v16");
+                        Self::migrate_v15_to_v16(conn)?;
+                        Self::set_user_version(conn, 16)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1416,6 +1422,16 @@ impl Database {
             Self::add_column_if_missing(conn, "prompts", "hidden", "BOOLEAN NOT NULL DEFAULT 0")?;
         }
         log::info!("v14 -> v15 migration done: prompts.hidden");
+        Ok(())
+    }
+
+    /// v15 -> v16 迁移：skills 添加 tags 列（与 mcp_servers.tags 一致，永不为 NULL）
+    fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        // skills 表在极早期/部分迁移的库中可能不存在，与其它迁移保持一致用 table_exists 守卫
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "tags", "TEXT NOT NULL DEFAULT '[]'")?;
+        }
+        log::info!("v15 -> v16 migration done: skills.tags");
         Ok(())
     }
 

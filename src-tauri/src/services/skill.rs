@@ -762,6 +762,7 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            tags: vec![],
         };
 
         // 保存到数据库
@@ -1100,6 +1101,7 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            tags: skill.tags.clone(),
         };
 
         db.save_skill(&updated_skill)?;
@@ -1534,6 +1536,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                tags: vec![],
             };
 
             // 保存到数据库
@@ -2722,6 +2725,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                tags: vec![],
             };
 
             // 保存到数据库
@@ -3109,6 +3113,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            tags: vec![],
         };
 
         db.save_skill(&skill)?;
@@ -3301,6 +3306,7 @@ mod tests {
                 installed_at: 0,
                 content_hash: SkillService::compute_dir_hash(&ssot_skill).ok(),
                 updated_at: 0,
+                tags: vec![],
             };
             db.save_skill(&skill).expect("save skill");
 
