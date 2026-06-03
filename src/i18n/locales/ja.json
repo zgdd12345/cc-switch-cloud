@@ -2766,6 +2766,8 @@
     "varKey": "キー",
     "varValue": "値",
     "addVar": "変数を追加",
-    "appliedFiles": "適用済みファイル"
+    "appliedFiles": "適用済みファイル",
+    "claudeMd": "CLAUDE.md",
+    "claudeMdHint": "このプロファイルのリテラル CLAUDE.md コンテンツです。プロファイルがアクティブな間、プロンプトシステムを通じて ~/.claude/CLAUDE.md を制御します。${VAR} の変数置換はサポートされていません。"
   }
 }

@@ -84,6 +84,7 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
   // Dotfile textarea state (edit mode only)
   const [settingsContent, setSettingsContent] = useState("");
   const [statuslineContent, setStatuslineContent] = useState("");
+  const [claudeMdContent, setClaudeMdContent] = useState("");
   const [dotfilesOpen, setDotfilesOpen] = useState(false);
 
   // Variables editor state
@@ -133,6 +134,7 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
         setMcp("");
         setSettingsContent("");
         setStatuslineContent("");
+        setClaudeMdContent("");
         setDotfilesOpen(false);
         setVarRows([]);
         setVarsOpen(false);
@@ -145,8 +147,10 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
     if (dotfiles) {
       const settings = dotfiles.find((d) => d.relPath === "settings.json");
       const statusline = dotfiles.find((d) => d.relPath === "statusline.sh");
+      const claudeMd = dotfiles.find((d) => d.relPath === "CLAUDE.md");
       setSettingsContent(settings?.content ?? "");
       setStatuslineContent(statusline?.content ?? "");
+      setClaudeMdContent(claudeMd?.content ?? "");
     }
   }, [dotfiles]);
 
@@ -182,6 +186,7 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
         for (const { relPath, value } of [
           { relPath: "settings.json", value: settingsContent },
           { relPath: "statusline.sh", value: statuslineContent },
+          { relPath: "CLAUDE.md", value: claudeMdContent },
         ]) {
           if (value.trim()) {
             dotfileOps.push(
@@ -448,6 +453,24 @@ export const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
                       rows={4}
                       spellCheck={false}
                       aria-label={t("profiles.statusline")}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+
+                  {/* CLAUDE.md */}
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">
+                      {t("profiles.claudeMd")}
+                    </label>
+                    <p className="text-muted-foreground text-xs">
+                      {t("profiles.claudeMdHint")}
+                    </p>
+                    <textarea
+                      value={claudeMdContent}
+                      onChange={(e) => setClaudeMdContent(e.target.value)}
+                      rows={6}
+                      spellCheck={false}
+                      aria-label={t("profiles.claudeMd")}
                       className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                   </div>

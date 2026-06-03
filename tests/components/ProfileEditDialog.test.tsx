@@ -135,6 +135,23 @@ describe("ProfileEditDialog", () => {
     expect(screen.getByLabelText("profiles.statusline")).toBeInTheDocument();
   });
 
+  it("shows the CLAUDE.md textarea after expanding the Dotfiles section", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={EDIT_PROFILE}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText("profiles.dotfilesSection"));
+
+    expect(screen.getByLabelText("profiles.claudeMd")).toBeInTheDocument();
+  });
+
   it("prefills textareas from loaded dotfiles", async () => {
     dotfilesData = [
       {
@@ -172,6 +189,37 @@ describe("ProfileEditDialog", () => {
 
     expect(settingsTA.value).toBe('{"foo": "bar"}');
     expect(statuslineTA.value).toBe("echo hello");
+  });
+
+  it("prefills CLAUDE.md textarea from loaded dotfiles", async () => {
+    dotfilesData = [
+      {
+        profileId: EDIT_PROFILE.id,
+        relPath: "CLAUDE.md",
+        content: "# My Project Instructions\n\nDo not use emojis.",
+      },
+    ];
+
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={EDIT_PROFILE}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText("profiles.dotfilesSection"));
+
+    const claudeMdTA = screen.getByLabelText(
+      "profiles.claudeMd",
+    ) as HTMLTextAreaElement;
+
+    expect(claudeMdTA.value).toBe(
+      "# My Project Instructions\n\nDo not use emojis.",
+    );
   });
 
   it("calls setDotfile for non-empty content on Save", async () => {
@@ -247,6 +295,76 @@ describe("ProfileEditDialog", () => {
         expect.objectContaining({
           id: EDIT_PROFILE.id,
           relPath: "statusline.sh",
+        }),
+      );
+    });
+  });
+
+  it("calls setDotfile with rel_path CLAUDE.md for non-empty content on Save", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={EDIT_PROFILE}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText("profiles.dotfilesSection"));
+
+    const claudeMdTA = screen.getByLabelText("profiles.claudeMd");
+    fireEvent.change(claudeMdTA, {
+      target: { value: "# Profile instructions\n\nBe concise." },
+    });
+
+    await user.click(screen.getByText("profiles.save"));
+
+    await waitFor(() => {
+      expect(setDotfileMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: EDIT_PROFILE.id,
+          relPath: "CLAUDE.md",
+          content: expect.stringContaining("Profile instructions"),
+        }),
+      );
+    });
+  });
+
+  it("calls deleteDotfile with rel_path CLAUDE.md for cleared content on Save", async () => {
+    dotfilesData = [
+      {
+        profileId: EDIT_PROFILE.id,
+        relPath: "CLAUDE.md",
+        content: "# Old instructions",
+      },
+    ];
+
+    const user = userEvent.setup();
+
+    render(
+      <ProfileEditDialog
+        open={true}
+        profile={EDIT_PROFILE}
+        currentApp="claude"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText("profiles.dotfilesSection"));
+
+    const claudeMdTA = screen.getByLabelText("profiles.claudeMd");
+    await user.tripleClick(claudeMdTA);
+    await user.clear(claudeMdTA);
+
+    await user.click(screen.getByText("profiles.save"));
+
+    await waitFor(() => {
+      expect(deleteDotfileMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: EDIT_PROFILE.id,
+          relPath: "CLAUDE.md",
         }),
       );
     });

@@ -2766,6 +2766,8 @@
     "varKey": "Key",
     "varValue": "Value",
     "addVar": "Add Variable",
-    "appliedFiles": "Applied Files"
+    "appliedFiles": "Applied Files",
+    "claudeMd": "CLAUDE.md",
+    "claudeMdHint": "Literal CLAUDE.md for this profile; drives ~/.claude/CLAUDE.md via the prompt system when the profile is active. No ${VAR} substitution."
   }
 }
