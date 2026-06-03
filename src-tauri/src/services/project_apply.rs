@@ -347,6 +347,15 @@ impl ProjectApplyService {
                             AppError::Message(format!("project skill remove failed: {e}"))
                         })?;
                 }
+            } else if r.kind == "settings_merge" {
+                // CRITICAL (contract c): a merge row MUST NOT hit the else
+                // (remove_whole_file_if_owned would attempt a whole-file delete of
+                // the user's settings.json). Reverse our recorded leaves instead.
+                crate::services::settings_merge::reverse_merge(
+                    std::path::Path::new(&r.target_path),
+                    r.owned_keys.as_deref(),
+                    &mut result.warnings,
+                )?;
             } else {
                 crate::services::profile_render::remove_whole_file_if_owned(
                     &r.target_path,
@@ -1442,5 +1451,115 @@ mod tests {
         let disk: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
         assert_eq!(disk["model"], serde_json::json!("ours"));
+    }
+
+    #[test]
+    #[serial]
+    fn m10_settings_file_is_never_whole_deleted_on_reapply_or_detach() {
+        // M10 (CRITICAL): a bound project with a settings fragment + CLAUDE.md.
+        // After apply: a settings_merge row exists. (a) re-apply: settings.json
+        // STILL EXISTS with the user key. (b) detach: settings.json STILL EXISTS
+        // (user keys reversed) — the merge row must NOT fall through the else and
+        // get whole-file deleted.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = merge_proj(home.home(), "m10", r#"{"model": "ours"}"#);
+        proj.spec.dotfiles.claude_md = "# mem\n".into();
+        db.save_project(&proj).expect("save");
+
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"userKept": true}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert!(
+            db.get_manifest_for_channel(&chan)
+                .unwrap()
+                .iter()
+                .any(|r| r.kind == "settings_merge"),
+            "a settings_merge row must exist after apply"
+        );
+
+        // (a) re-apply: file STILL exists with the user key.
+        ProjectApplyService::apply(&state, &proj.id).expect("re-apply");
+        assert!(
+            target.exists(),
+            "settings.json must NOT be whole-deleted by re-apply"
+        );
+        let disk_a: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk_a["userKept"],
+            serde_json::json!(true),
+            "user key survives re-apply"
+        );
+
+        // (b) detach: file STILL exists; our [model] leaf reversed; user key intact.
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(
+            target.exists(),
+            "settings.json must STILL EXIST after detach (M10)"
+        );
+        let disk_b: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk_b["userKept"],
+            serde_json::json!(true),
+            "user key survives detach"
+        );
+        assert!(
+            disk_b.get("model").is_none(),
+            "our inserted leaf removed on detach (M7)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_restores_overwritten_user_key_and_keeps_new_user_key() {
+        // M7 + M9: frag overwrote user's existing [model]; user later added a brand
+        // new key never in the frag. Detach restores [model] to the user original
+        // and leaves the brand-new key untouched.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = merge_proj(home.home(), "m7m9", r#"{"model": "ours"}"#);
+        db.save_project(&proj).expect("save");
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"model": "USER_ORIGINAL"}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        // user adds a brand-new key that was NEVER in our fragment (M9).
+        let mut cur: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        cur["userBrandNew"] = serde_json::json!("added later");
+        std::fs::write(&target, serde_json::to_vec_pretty(&cur).unwrap()).unwrap();
+
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk["model"],
+            serde_json::json!("USER_ORIGINAL"),
+            "overwritten user key restored (M7)"
+        );
+        assert_eq!(
+            disk["userBrandNew"],
+            serde_json::json!("added later"),
+            "brand-new user key survives (M9)"
+        );
+
+        // rows cleared.
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert_eq!(
+            db.get_manifest_for_channel(&chan).unwrap().len(),
+            0,
+            "rows cleared on detach"
+        );
     }
 }
