@@ -132,7 +132,9 @@ pub(crate) fn run_save_logic(
     let canon = base.root().to_string_lossy().to_string();
 
     // One-time seed-from-profile snapshot (decision #3): only when the project
-    // has no own content yet AND a profile id is given. COPY spec.content.
+    // has no own content yet AND a profile id is given. COPY spec.content + the
+    // profile's literal CLAUDE.md (a one-time snapshot, NOT a live link — a later
+    // profile edit must not change the bound project).
     if let Some(pid) = seed_from_profile_id {
         let empty = spec.content.skills.is_empty()
             && spec.content.commands.is_empty()
@@ -141,6 +143,13 @@ pub(crate) fn run_save_logic(
         if empty {
             if let Some(prof) = state.db.get_profile(&pid)? {
                 spec.content = prof.spec.content.clone(); // snapshot, not a live link
+            }
+        }
+        // Seed the literal CLAUDE.md from profile_dotfiles (rel_path=="CLAUDE.md", 3b-3)
+        // only when the project has none yet — mirrors the content empty-guard.
+        if spec.dotfiles.claude_md.is_empty() {
+            if let Some(df) = state.db.get_profile_dotfile(&pid, "CLAUDE.md")? {
+                spec.dotfiles.claude_md = df.content; // snapshot, not a live link
             }
         }
     }
@@ -283,6 +292,57 @@ mod tests {
             reloaded.spec.content.commands,
             vec!["seeded-cmd"],
             "project is a snapshot; profile edit must not leak in"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn save_seeds_profile_claude_md_as_one_time_snapshot() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+
+        let prof = crate::app_config::Profile {
+            id: "local:claude:Mem".into(),
+            app_type: "claude".into(),
+            name: "Mem".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: ProfileSpec::default(),
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&prof).expect("save profile");
+        // the profile's literal CLAUDE.md lives in profile_dotfiles (3b-3).
+        db.set_profile_dotfile("local:claude:Mem", "CLAUDE.md", "# from profile\n")
+            .expect("set dotfile");
+
+        let root = home.dir.path().join("seedmem");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let created = run_save_logic(
+            &state,
+            None,
+            "claude",
+            root.to_str().unwrap(),
+            Some("Seeded".into()),
+            ProjectSpec::default(),
+            Some("local:claude:Mem".into()),
+        )
+        .expect("save");
+        assert_eq!(
+            created.spec.dotfiles.claude_md, "# from profile\n",
+            "profile CLAUDE.md seeded into project dotfiles"
+        );
+
+        // EDIT the profile's CLAUDE.md afterwards — must NOT change the bound project.
+        db.set_profile_dotfile("local:claude:Mem", "CLAUDE.md", "# CHANGED\n")
+            .expect("update dotfile");
+        let reloaded = db.get_project(&created.id).unwrap().unwrap();
+        assert_eq!(
+            reloaded.spec.dotfiles.claude_md, "# from profile\n",
+            "snapshot, not a live link"
         );
     }
 

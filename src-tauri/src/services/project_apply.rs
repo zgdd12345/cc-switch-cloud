@@ -190,6 +190,34 @@ impl ProjectApplyService {
             }
         }
 
+        // ---- project memory (CLAUDE.md, literal, whole-file; 4b-1) ----
+        // Whole-file kind. Teardown is handled by the EXISTING else-arm above
+        // (pre-delete) and in detach (remove_whole_file_if_owned) — NO new arm.
+        // The prior project_memory file (if any) was already owned-deleted by the
+        // pre-delete sweep, so a non-empty write here is a clean (re)materialize and
+        // an empty claude_md correctly leaves nothing behind.
+        let claude_md = &project.spec.dotfiles.claude_md;
+        if !claude_md.is_empty() {
+            let target = base.memory_file(&app);
+            // prior_owned_hash is None: the pre-delete sweep already removed our
+            // previously-owned file, so the only reason `target` still exists is a
+            // user-created/edited file we must NOT clobber (write helper skips+warns).
+            if let Some(hash) = write_project_whole_file(&target, claude_md, None)? {
+                state.db.record_manifest_entry(&Self::row(
+                    &channel,
+                    &project.id,
+                    &target,
+                    "project_memory",
+                    &hash,
+                ))?;
+            } else {
+                result.warnings.push(format!(
+                    "skipped project CLAUDE.md (user-edited/unmanaged file present): {}",
+                    target.display()
+                ));
+            }
+        }
+
         Ok(result)
     }
 
@@ -289,6 +317,40 @@ impl ProjectApplyService {
     }
 }
 
+/// Hash-gated whole-file write for a project dotfile (4b-1). Mirrors
+/// `profile_render::render_whole_file`'s OWNERSHIP contract but is base-agnostic:
+/// it does NOT use `validate_rel_path` / `~/.claude` and does NOT stamp a manifest
+/// row (the caller records via `Self::row`). The abs path is already past
+/// `ProjectBase::resolve`'s HOME/symlink gate and the filename is a compile-time
+/// constant ("CLAUDE.md"), so there is no traversal risk.
+///
+/// - exists AND (prior_owned_hash is None OR disk_hash != prior_owned_hash):
+///   skip + warn, return Ok(None) (never overwrite a user-edited/unmanaged file).
+/// - absent, OR disk_hash == prior_owned_hash: atomic_write the content, return
+///   Ok(Some(sha256(content))).
+fn write_project_whole_file(
+    abs_path: &Path,
+    content: &str,
+    prior_owned_hash: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    if abs_path.exists() {
+        let disk = std::fs::read(abs_path).map_err(|e| AppError::io(abs_path, e))?;
+        let disk_hash = crate::services::profile_render::content_hash(&disk);
+        let owned = matches!(prior_owned_hash, Some(h) if h == disk_hash);
+        if !owned {
+            log::warn!(
+                "拒绝覆盖未托管/被用户编辑的项目文件: {}",
+                abs_path.display()
+            );
+            return Ok(None);
+        }
+    }
+    atomic_write(abs_path, content.as_bytes())?;
+    Ok(Some(crate::services::profile_render::content_hash(
+        content.as_bytes(),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +441,7 @@ mod tests {
             spec: ProjectSpec {
                 content,
                 vars: serde_json::Map::new(),
+                dotfiles: Default::default(),
             },
             enabled: true,
             created_at: 1,
@@ -725,6 +788,217 @@ mod tests {
             db.get_manifest_for_channel(gone_chan).unwrap().len(),
             0,
             "apply() must prune the stale path-gone channel via apply-time cleanup"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_writes_when_absent() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        // absent → write, returns Some(hash) of the content.
+        let h = super::write_project_whole_file(&target, "# memory", None).expect("write");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "# memory");
+        assert_eq!(
+            h,
+            Some(crate::services::profile_render::content_hash(b"# memory"))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_skips_user_edited_file() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        // file exists with content we do NOT own (prior hash None) → skip + Ok(None).
+        std::fs::write(&target, "USER WROTE THIS").expect("seed");
+        let r = super::write_project_whole_file(&target, "MANAGED", None).expect("skip");
+        assert_eq!(r, None, "must skip an unmanaged file");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "USER WROTE THIS");
+
+        // file exists, prior hash present but disk hash differs (user edited) → skip.
+        let prior = crate::services::profile_render::content_hash(b"OLD MANAGED");
+        let r2 = super::write_project_whole_file(&target, "MANAGED", Some(&prior)).expect("skip2");
+        assert_eq!(r2, None, "disk_hash != prior_owned_hash must skip");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "USER WROTE THIS");
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_overwrites_when_owned() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        std::fs::write(&target, "OLD MANAGED").expect("seed");
+        // disk_hash == prior_owned_hash → we own it → overwrite, return new hash.
+        let prior = crate::services::profile_render::content_hash(b"OLD MANAGED");
+        let h =
+            super::write_project_whole_file(&target, "NEW MANAGED", Some(&prior)).expect("write");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "NEW MANAGED");
+        assert_eq!(
+            h,
+            Some(crate::services::profile_render::content_hash(
+                b"NEW MANAGED"
+            ))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_writes_claude_md_at_root_and_records_project_memory() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memroot", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# Project memory\nbe terse\n".into();
+        db.save_project(&proj).expect("save");
+
+        let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        assert!(res.warnings.is_empty(), "no warnings: {:?}", res.warnings);
+
+        // CLAUDE.md materialized at the project ROOT — NOT under .claude/.
+        let root_file = canon.join("CLAUDE.md");
+        assert_eq!(
+            std::fs::read_to_string(&root_file).unwrap(),
+            "# Project memory\nbe terse\n"
+        );
+        assert!(
+            !canon.join(".claude").join("CLAUDE.md").exists(),
+            "must NOT be written under .claude/"
+        );
+
+        // one project_memory manifest row on this channel, hash = sha256(content).
+        let chan = format!("project:{}", canon.to_string_lossy());
+        let rows = db.get_manifest_for_channel(&chan).unwrap();
+        let mem: Vec<_> = rows.iter().filter(|r| r.kind == "project_memory").collect();
+        assert_eq!(mem.len(), 1, "exactly one project_memory row");
+        assert_eq!(mem[0].project_id.as_deref(), Some(proj.id.as_str()));
+        assert_eq!(mem[0].target_path, root_file.to_string_lossy());
+        assert_eq!(
+            mem[0].content_hash.as_deref(),
+            Some(
+                crate::services::profile_render::content_hash(b"# Project memory\nbe terse\n")
+                    .as_str()
+            )
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_empty_claude_md_writes_no_file_and_no_row() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = project_at(home.home(), "memnone", ProfileContent::default());
+        // dotfiles.claude_md left empty by Default
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        assert!(
+            !canon.join("CLAUDE.md").exists(),
+            "empty claude_md → no file"
+        );
+        let chan = format!("project:{}", canon.to_string_lossy());
+        let rows = db.get_manifest_for_channel(&chan).unwrap();
+        assert!(
+            !rows.iter().any(|r| r.kind == "project_memory"),
+            "no project_memory row for empty claude_md"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn reapply_is_idempotent_and_user_edited_claude_md_survives() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memreapply", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# v1\n".into();
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 1");
+
+        let root_file = canon.join("CLAUDE.md");
+        let chan = format!("project:{}", canon.to_string_lossy());
+
+        // clean re-apply with NEW owned content: pre-delete removes the owned v1
+        // (hash matches), then the new write lands → still exactly one row.
+        proj.spec.dotfiles.claude_md = "# v2\n".into();
+        db.save_project(&proj).expect("save v2");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 2");
+        assert_eq!(std::fs::read_to_string(&root_file).unwrap(), "# v2\n");
+        let mem = db
+            .get_manifest_for_channel(&chan)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == "project_memory")
+            .count();
+        assert_eq!(mem, 1, "re-apply stays idempotent (one row)");
+
+        // USER edits CLAUDE.md → next apply must NOT clobber it: pre-delete skips
+        // (hash mismatch leaves the file), and the new write also skips (file
+        // exists with a non-matching prior hash) → user edit preserved + warn.
+        std::fs::write(&root_file, "# USER OWNS THIS NOW\n").expect("user edit");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 3");
+        assert_eq!(
+            std::fs::read_to_string(&root_file).unwrap(),
+            "# USER OWNS THIS NOW\n",
+            "user-edited CLAUDE.md must survive re-apply"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_removes_owned_claude_md_via_existing_else_arm() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memdetach", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# owned memory\n".into();
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        let root_file = canon.join("CLAUDE.md");
+        assert!(root_file.is_file(), "applied first");
+
+        // detach: the project_memory row falls into the existing ELSE arm
+        // (remove_whole_file_if_owned) — owned (hash matches) → removed.
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(!root_file.exists(), "owned CLAUDE.md removed on detach");
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert_eq!(
+            db.get_manifest_for_channel(&chan).unwrap().len(),
+            0,
+            "rows cleared"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_preserves_user_edited_claude_md() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memdetach2", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# owned\n".into();
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        // user edits the materialized CLAUDE.md → hash no longer matches the row →
+        // remove_whole_file_if_owned must skip+warn → file survives detach.
+        let root_file = canon.join("CLAUDE.md");
+        std::fs::write(&root_file, "# USER EDITED\n").expect("edit");
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert_eq!(
+            std::fs::read_to_string(&root_file).unwrap(),
+            "# USER EDITED\n",
+            "user-edited CLAUDE.md must NOT be deleted on detach"
         );
     }
 }

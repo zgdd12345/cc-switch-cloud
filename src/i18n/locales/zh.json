@@ -2805,6 +2805,9 @@
     "commandsPlaceholder": "例如 my-command, @backend（逗号分隔）",
     "agents": "子代理",
     "agentsPlaceholder": "例如 my-agent, @backend（逗号分隔）",
+    "claudeMd": "项目 CLAUDE.md（叠加记忆）",
+    "claudeMdPlaceholder": "# 项目规则\n纯文本字面量——不做 ${VAR} 渲染。",
+    "claudeMdHint": "写入 <项目>/CLAUDE.md（项目根目录）。Claude Code 会与全局 ~/.claude/CLAUDE.md 叠加读取——是补充而非替换。",
     "appliedFiles": "已应用文件",
     "cancel": "取消",
     "save": "保存"

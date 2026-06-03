@@ -2805,6 +2805,9 @@
     "commandsPlaceholder": "例: my-command, @backend（カンマ区切り）",
     "agents": "エージェント",
     "agentsPlaceholder": "例: my-agent, @backend（カンマ区切り）",
+    "claudeMd": "プロジェクト CLAUDE.md（追加メモリ）",
+    "claudeMdPlaceholder": "# プロジェクトルール\nリテラルテキスト — ${VAR} 展開なし。",
+    "claudeMdHint": "<プロジェクト>/CLAUDE.md（プロジェクトルート）に出力されます。Claude Code はグローバルの ~/.claude/CLAUDE.md と追加的に読み込みます — 置換ではなく補完です。",
     "appliedFiles": "適用済みファイル",
     "cancel": "キャンセル",
     "save": "保存"

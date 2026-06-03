@@ -29,6 +29,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
   const [skills, setSkills] = useState("");
   const [commands, setCommands] = useState("");
   const [agents, setAgents] = useState("");
+  const [claudeMd, setClaudeMd] = useState("");
   const [seedId, setSeedId] = useState<string>("");
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
     setSkills((project?.spec.content.skills ?? []).join(", "));
     setCommands((project?.spec.content.commands ?? []).join(", "));
     setAgents((project?.spec.content.agents ?? []).join(", "));
+    setClaudeMd(project?.spec.dotfiles?.claudeMd ?? "");
     setSeedId("");
   }, [open, project]);
 
@@ -57,6 +59,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
         mcp: [],
       },
       vars: {},
+      dotfiles: { claudeMd },
     };
     try {
       await save.mutateAsync({
@@ -107,6 +110,18 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
         <Input className="mt-1 mb-3" value={commands} onChange={(e) => setCommands(e.target.value)} placeholder={t("projects.commandsPlaceholder")} />
         <label className="text-sm font-medium">{t("projects.agents")}</label>
         <Input className="mt-1 mb-3" value={agents} onChange={(e) => setAgents(e.target.value)} placeholder={t("projects.agentsPlaceholder")} />
+
+        <label className="text-sm font-medium">{t("projects.claudeMd")}</label>
+        <p className="text-xs text-muted-foreground mt-1">{t("projects.claudeMdHint")}</p>
+        <textarea
+          className="mt-1 mb-3 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          value={claudeMd}
+          onChange={(e) => setClaudeMd(e.target.value)}
+          rows={6}
+          spellCheck={false}
+          aria-label={t("projects.claudeMd")}
+          placeholder={t("projects.claudeMdPlaceholder")}
+        />
 
         {project && (manifest?.length ?? 0) > 0 && (
           <div className="mb-3">
