@@ -24,6 +24,7 @@ import {
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useUpdateSkillTags,
   type InstalledSkill,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
@@ -497,6 +498,8 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   isLast,
 }) => {
   const { t } = useTranslation();
+  const [tagsInput, setTagsInput] = useState((skill.tags ?? []).join(", "));
+  const updateTagsMutation = useUpdateSkillTags();
 
   const openDocs = async () => {
     if (!skill.readmeUrl) return;
@@ -504,6 +507,18 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       await settingsApi.openExternal(skill.readmeUrl);
     } catch {
       // ignore
+    }
+  };
+
+  const handleSaveTags = async () => {
+    const parsed = tagsInput
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    try {
+      await updateTagsMutation.mutateAsync({ id: skill.id, tags: parsed });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
     }
   };
 
@@ -550,6 +565,20 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             {skill.description}
           </p>
         )}
+        <div className="flex items-center gap-1 mt-0.5">
+          <input
+            type="text"
+            aria-label={t("skills.tags")}
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+            onBlur={() => void handleSaveTags()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleSaveTags();
+            }}
+            placeholder={t("skills.tagsPlaceholder")}
+            className="w-40 rounded border border-input bg-background px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        </div>
       </div>
 
       <AppToggleGroup

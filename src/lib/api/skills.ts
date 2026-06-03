@@ -36,6 +36,7 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  tags?: string[];
 }
 
 export interface SkillUninstallResult {
@@ -202,6 +203,11 @@ export const skillsApi = {
   /** 更新单个 Skill */
   async updateSkill(id: string): Promise<InstalledSkill> {
     return await invoke("update_skill", { id });
+  },
+
+  /** 更新 Skill 标签 */
+  async updateSkillTags(id: string, tags: string[]): Promise<void> {
+    return await invoke("update_skill_tags", { id, tags });
   },
 
   /** 迁移 Skill 存储位置 */
