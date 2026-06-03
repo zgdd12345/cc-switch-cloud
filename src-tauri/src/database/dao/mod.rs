@@ -9,6 +9,7 @@ pub mod manifest;
 pub mod mcp;
 pub mod profile_dotfiles;
 pub mod profiles;
+pub mod projects;
 pub mod prompts;
 pub mod providers;
 pub mod providers_seed;
