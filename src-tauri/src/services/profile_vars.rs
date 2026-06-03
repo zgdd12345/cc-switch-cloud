@@ -55,6 +55,7 @@ impl VarMap {
     /// Build a `VarMap` directly from an ordered index map (the inner field is
     /// private; `build_project_var_map` (T7) constructs the layers itself and
     /// hands the finished map in here).
+    #[allow(dead_code)]
     pub(crate) fn from_index_map(map: IndexMap<String, String>) -> VarMap {
         VarMap(map)
     }
