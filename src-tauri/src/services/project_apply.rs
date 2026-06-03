@@ -316,6 +316,59 @@ impl ProjectApplyService {
         }
         Ok(pruned)
     }
+
+    /// Build the layered `${VAR}` map for a PROJECT (contract g). Layers low→high:
+    /// 1. allowlisted process env (profile_vars::ENV_ALLOWLIST_PREFIXES),
+    /// 2. active provider settings_config.env (get_effective_current_provider),
+    /// 3. project.spec.vars (TOP). Does NOT call profile_vars::build_var_map — that
+    /// would inject the GLOBAL active profile's vars, which must NOT leak into a
+    /// project render. reverse_merge does NOT re-render, so a value change between
+    /// apply and detach cannot defeat teardown (teardown is a pure fn of the
+    /// stored snapshot).
+    pub fn build_project_var_map(
+        db: &crate::database::Database,
+        app_type: &AppType,
+        project: &crate::app_config::Project,
+    ) -> Result<crate::services::profile_vars::VarMap, AppError> {
+        use indexmap::IndexMap;
+        let mut map: IndexMap<String, String> = IndexMap::new();
+
+        // Layer 1: allowlisted process env.
+        for (k, v) in std::env::vars() {
+            if crate::services::profile_vars::ENV_ALLOWLIST_PREFIXES
+                .iter()
+                .any(|prefix| k.starts_with(prefix))
+            {
+                map.insert(k, v);
+            }
+        }
+
+        // Layer 2: active provider env (if any).
+        if let Some(provider_id) = crate::settings::get_effective_current_provider(db, app_type)? {
+            if let Some(provider) = db.get_provider_by_id(&provider_id, app_type.as_str())? {
+                if let Some(env_obj) = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                {
+                    for (k, v) in env_obj {
+                        if let Some(value) = crate::services::profile_vars::coerce_value(v) {
+                            map.insert(k.clone(), value);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Layer 3: project spec.vars (highest precedence).
+        for (k, v) in &project.spec.vars {
+            if let Some(value) = crate::services::profile_vars::coerce_value(v) {
+                map.insert(k.clone(), value);
+            }
+        }
+
+        Ok(crate::services::profile_vars::VarMap::from_index_map(map))
+    }
 }
 
 /// Hash-gated whole-file write for a project dotfile (4b-1). Mirrors
@@ -1003,6 +1056,116 @@ mod tests {
             std::fs::read_to_string(&root_file).unwrap(),
             "# USER EDITED\n",
             "user-edited CLAUDE.md must NOT be deleted on detach"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn build_project_var_map_precedence_spec_over_provider_over_process() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        std::env::set_var("ANTHROPIC_SHARED", "from_process");
+        std::env::set_var("AGENTHUB_ONLY_PROCESS", "process_only");
+        std::env::set_var("RANDOM_HOST_SECRET", "leak");
+
+        let db = Arc::new(Database::memory().expect("db"));
+        let app = AppType::Claude;
+
+        let provider = crate::provider::Provider::with_id(
+            "prov1".to_string(),
+            "Prov 1".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_SHARED": "from_provider",
+                    "ANTHROPIC_PROVIDER_KEY": "pk"
+                }
+            }),
+            None,
+        );
+        db.save_provider(app.as_str(), &provider)
+            .expect("save provider");
+        db.set_current_provider(app.as_str(), "prov1")
+            .expect("set current");
+
+        let (mut proj, _canon) = project_at(home.home(), "varproj", ProfileContent::default());
+        proj.spec.vars.insert(
+            "ANTHROPIC_SHARED".to_string(),
+            serde_json::Value::String("from_project".to_string()),
+        );
+        db.save_project(&proj).expect("save");
+
+        let app_arc = AppType::Claude;
+        let stored = db.get_project(&proj.id).unwrap().unwrap();
+        let map =
+            ProjectApplyService::build_project_var_map(&db, &app_arc, &stored).expect("build map");
+
+        assert_eq!(
+            map.get("ANTHROPIC_SHARED"),
+            Some("from_project"),
+            "project.spec.vars wins"
+        );
+        assert_eq!(
+            map.get("ANTHROPIC_PROVIDER_KEY"),
+            Some("pk"),
+            "provider env contributes"
+        );
+        assert_eq!(
+            map.get("AGENTHUB_ONLY_PROCESS"),
+            Some("process_only"),
+            "allowlisted process env"
+        );
+        assert_eq!(
+            map.get("RANDOM_HOST_SECRET"),
+            None,
+            "non-allowlisted env filtered"
+        );
+
+        std::env::remove_var("ANTHROPIC_SHARED");
+        std::env::remove_var("AGENTHUB_ONLY_PROCESS");
+        std::env::remove_var("RANDOM_HOST_SECRET");
+    }
+
+    #[test]
+    #[serial]
+    fn build_project_var_map_does_not_leak_global_profile_vars() {
+        // The global ACTIVE profile may carry spec.vars; build_project_var_map MUST
+        // NOT include them (it never calls build_var_map). Only the PROJECT's own
+        // spec.vars (+ provider env + allowlisted process env) feed the map.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let app = AppType::Claude;
+
+        // an active profile with a var that MUST NOT leak.
+        let mut pvars = serde_json::Map::new();
+        pvars.insert(
+            "ANTHROPIC_PROFILE_ONLY".to_string(),
+            serde_json::Value::String("LEAKED".to_string()),
+        );
+        let profile = crate::app_config::Profile {
+            id: "local:claude:Active".into(),
+            app_type: "claude".into(),
+            name: "Active".into(),
+            description: None,
+            is_active: true,
+            current_provider_id: None,
+            spec: crate::app_config::ProfileSpec {
+                content: Default::default(),
+                vars: pvars,
+            },
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+
+        let (proj, _canon) = project_at(home.home(), "noleakproj", ProfileContent::default());
+        db.save_project(&proj).expect("save");
+        let stored = db.get_project(&proj.id).unwrap().unwrap();
+        let map = ProjectApplyService::build_project_var_map(&db, &app, &stored).expect("map");
+        assert_eq!(
+            map.get("ANTHROPIC_PROFILE_ONLY"),
+            None,
+            "global profile vars must NOT leak"
         );
     }
 }
