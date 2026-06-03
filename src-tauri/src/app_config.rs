@@ -198,6 +198,9 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+    /// 标签列表（JSON 数组，存储为 TEXT）
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// 已安装的 Command（v0.4+ 统一结构）

@@ -565,6 +565,7 @@ mod tests {
             installed_at: 1,
             content_hash: None,
             updated_at: 0,
+            tags: vec![],
         }
     }
 
