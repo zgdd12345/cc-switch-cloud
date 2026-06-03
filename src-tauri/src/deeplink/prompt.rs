@@ -67,6 +67,7 @@ pub fn import_prompt_from_deeplink(
         content,
         description: request.description,
         enabled: false, // Always start as disabled, will be enabled later if needed
+        hidden: false,
         created_at: Some(timestamp),
         updated_at: Some(timestamp),
     };

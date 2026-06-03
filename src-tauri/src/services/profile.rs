@@ -19,6 +19,7 @@ use crate::services::command::CommandService;
 use crate::services::profile_render::{
     remove_whole_file_if_owned, render_whole_file, validate_rel_path,
 };
+use crate::services::prompt::PromptService;
 use crate::services::provider::{write_live_with_common_config, ProviderService};
 use crate::services::{McpService, SkillService};
 use crate::store::AppState;
@@ -274,6 +275,82 @@ impl ProfileService {
         // ---- 7. 设置 active profile（倒数第二步）----
         state.db.set_active_profile(app_type.as_str(), profile_id)?;
 
+        // ---- 5b. CLAUDE.md 仲裁（3b-3，HARD-GATED 到 AppType::Claude）----
+        // CLAUDE.md 是 Claude 独有的全局提示词文件，且**字面量**（不渲染 `${VAR}`）。
+        // 它经由一条隐藏的 `__profile__:<id>` prompt 行接入既有的「单启用」prompt 体系：
+        // - 启用唯一只能走 enable_prompt（执行 single-enabled sweep + 跳过隐藏行回填）；
+        // - 绝不通过 upsert_prompt(enabled=true) 启用隐藏行（upsert 不 sweep）。
+        // 放在步骤 7（set_active）之后、步骤 8（settings 重建）之前，与 set_active 同处倒数。
+        if matches!(app_type, AppType::Claude) {
+            // 先禁用 OUTGOING profile 的隐藏行（若存在、是 claude profile、且与 INCOMING 不同），
+            // 镜像 deactivate 步骤 2b。否则「从有 CLAUDE.md 的 A 切到无 CLAUDE.md 的 B」会进入
+            // 下方 `_ =>` 分支，仅检查 INCOMING(B) 的隐藏行（不存在）-> no-op，导致 A 的隐藏行
+            // 仍 enabled、~/.claude/CLAUDE.md 仍残留 A 的内容（违反单启用不变量 + 泄漏前一 profile）。
+            // 当 INCOMING 有 CLAUDE.md 时，下方 enable_prompt 的 single-enabled sweep 也会覆盖这一步
+            // （与此显式禁用幂等）；当 INCOMING 无 CLAUDE.md 时，正是这一步拆掉 A。
+            if let Some(out) = &outgoing {
+                if out.app_type == AppType::Claude.as_str() && out.id != profile_id {
+                    let out_hidden = format!("__profile__:{}", out.id);
+                    if let Some(mut row) = state.db.get_prompt_with_hidden("claude", &out_hidden)? {
+                        if row.enabled {
+                            row.enabled = false;
+                            PromptService::upsert_prompt(state, AppType::Claude, &out_hidden, row)?;
+                        }
+                    }
+                }
+            }
+
+            let hidden_id = format!("__profile__:{profile_id}");
+            match state.db.get_profile_dotfile(profile_id, "CLAUDE.md")? {
+                Some(df) if !df.content.trim().is_empty() => {
+                    // 用**字面量**内容（NO ${VAR} 渲染）构建/更新隐藏行；enabled 由随后的
+                    // enable_prompt 翻转（save_prompt 仅持久化，enabled=false）。
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let row = crate::prompt::Prompt {
+                        id: hidden_id.clone(),
+                        name: format!("(profile) {}", profile.name),
+                        content: df.content.clone(),
+                        description: Some(
+                            "AgentHub profile-managed CLAUDE.md (hidden)".to_string(),
+                        ),
+                        enabled: false,
+                        hidden: true,
+                        created_at: Some(now),
+                        updated_at: Some(now),
+                    };
+                    state.db.save_prompt("claude", &row)?;
+                    PromptService::enable_prompt(state, AppType::Claude, &hidden_id)?;
+
+                    // 仲裁后 warn 检查：enable_prompt 应已让本 profile 的隐藏行成为唯一
+                    // 启用项。若不是（理论上不应发生），透出非致命警告而非静默失败。
+                    let enabled_now = state
+                        .db
+                        .get_prompts_with_hidden("claude")?
+                        .into_iter()
+                        .find(|(_, p)| p.enabled)
+                        .map(|(id, _)| id);
+                    if enabled_now.as_deref() != Some(hidden_id.as_str()) {
+                        result.warnings.push(format!(
+                            "CLAUDE.md not owned by profile: active prompt is {}",
+                            enabled_now.as_deref().unwrap_or("<none>")
+                        ));
+                    }
+                }
+                // None 或空内容 -> 确保隐藏行不再是 CLAUDE.md 的活跃写入者。
+                _ => {
+                    if let Some(mut row) = state.db.get_prompt_with_hidden("claude", &hidden_id)? {
+                        if row.enabled {
+                            row.enabled = false;
+                            PromptService::upsert_prompt(state, AppType::Claude, &hidden_id, row)?;
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- 8. 确定性重建 settings.json ----
         // active 现已是 INCOMING，故 build_effective_settings_with_common_config（T3）
         // 会把 INCOMING 的 settings.json 片段 deep-merge 进去；此写入是幂等且权威的。
@@ -325,6 +402,20 @@ impl ProfileService {
             state
                 .db
                 .clear_manifest_for_profile(&c.id, app_type.as_str())?;
+
+            // 2b. CLAUDE.md 拆除（3b-3，HARD-GATED 到 claude profile）：若原 active 是
+            // claude profile 且其隐藏行仍是 CLAUDE.md 的活跃写入者，则禁用之。
+            // upsert_prompt(enabled=false) 内部依 T3 any_enabled 决定是否清空文件
+            // （无其它启用 prompt -> 清空；仍有可见 prompt 启用 -> 保留）。
+            if c.app_type == AppType::Claude.as_str() {
+                let hidden_id = format!("__profile__:{}", c.id);
+                if let Some(mut row) = state.db.get_prompt_with_hidden("claude", &hidden_id)? {
+                    if row.enabled {
+                        row.enabled = false;
+                        PromptService::upsert_prompt(state, AppType::Claude, &hidden_id, row)?;
+                    }
+                }
+            }
         }
 
         // ---- 3. 无 profile 层确定性重建 settings.json ----
@@ -1550,5 +1641,286 @@ mod tests {
         );
         let active = db.get_active_profile("claude").unwrap().expect("active");
         assert_eq!(active.id, "p1");
+    }
+
+    // ========== 3b-3 T4: activate/deactivate CLAUDE.md via hidden prompt row ==========
+
+    /// 构造一个 codex profile（app_type = "codex"，其余同 `profile()` 助手）。
+    fn codex_profile(id: &str, content: ProfileContent, provider: Option<&str>) -> Profile {
+        let mut p = profile(id, content, provider);
+        p.app_type = "codex".into();
+        p
+    }
+
+    /// 激活带 CLAUDE.md profile_dotfile 的 claude profile：
+    /// - ~/.claude/CLAUDE.md == 字面量内容；
+    /// - get_prompts（UI/已过滤）不含隐藏行；
+    /// - get_prompts_with_hidden 含隐藏行且 enabled==true。
+    #[test]
+    #[serial]
+    fn activate_claude_profile_writes_claude_md_via_hidden_row() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        let p = profile("p1", content(&[], &[], &[], &[]), Some("prov"));
+        db.save_profile(&p).expect("save profile");
+        db.set_profile_dotfile("p1", "CLAUDE.md", "hello")
+            .expect("set CLAUDE.md dotfile");
+
+        ProfileService::activate(&state, AppType::Claude, "p1").expect("activate");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "hello",
+            "live CLAUDE.md must be the literal dotfile content"
+        );
+
+        let hidden_id = "__profile__:p1";
+        let filtered = db.get_prompts("claude").unwrap();
+        assert!(
+            !filtered.contains_key(hidden_id),
+            "UI-filtered get_prompts must NOT contain the hidden profile row: {filtered:?}"
+        );
+
+        let all = db.get_prompts_with_hidden("claude").unwrap();
+        let hidden = all
+            .get(hidden_id)
+            .expect("get_prompts_with_hidden must contain the hidden row");
+        assert!(hidden.enabled, "hidden profile row must be enabled");
+        assert!(hidden.hidden, "profile row must be marked hidden");
+        assert_eq!(hidden.content, "hello");
+    }
+
+    /// 非 claude profile（codex）即使带 CLAUDE.md dotfile，step 5b 也是 no-op：
+    /// - 不为 codex 创建任何 `__profile__:` 隐藏行；
+    /// - ~/.codex/AGENTS.md 不含该 CLAUDE.md 内容（"x"）。
+    #[test]
+    #[serial]
+    fn non_claude_profile_with_claude_md_is_noop() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        let p = codex_profile("cx", content(&[], &[], &[], &[]), None);
+        db.save_profile(&p).expect("save codex profile");
+        db.set_profile_dotfile("cx", "CLAUDE.md", "x")
+            .expect("set CLAUDE.md dotfile on codex profile");
+
+        ProfileService::activate(&state, AppType::Codex, "cx").expect("activate codex");
+
+        // No hidden __profile__ row created for codex (CLAUDE.md is Claude-only).
+        let all = db.get_prompts_with_hidden("codex").unwrap();
+        assert!(
+            !all.keys().any(|k| k.starts_with("__profile__:")),
+            "codex activate must NOT create a __profile__ hidden row: {all:?}"
+        );
+        // And the codex CLAUDE.md hidden id is absent too (no cross-app leakage).
+        assert!(
+            db.get_prompt_with_hidden("codex", "__profile__:cx")
+                .unwrap()
+                .is_none(),
+            "no hidden row for codex profile cx"
+        );
+
+        // ~/.codex/AGENTS.md must NOT contain the CLAUDE.md content.
+        let agents_md = home.dir.path().join(".codex").join("AGENTS.md");
+        if agents_md.exists() {
+            let body = fs::read_to_string(&agents_md).unwrap();
+            assert!(
+                !body.contains('x'),
+                "codex AGENTS.md must not receive the CLAUDE.md content: {body:?}"
+            );
+        }
+    }
+
+    /// 在 claude profile 间切换：CLAUDE.md 重新指向 INCOMING；
+    /// OUTGOING 隐藏行 disabled，INCOMING 隐藏行 enabled。
+    #[test]
+    #[serial]
+    fn switch_claude_profiles_repoints_claude_md() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("A", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save A");
+        db.set_profile_dotfile("A", "CLAUDE.md", "A")
+            .expect("CLAUDE.md A");
+        db.save_profile(&profile("B", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save B");
+        db.set_profile_dotfile("B", "CLAUDE.md", "B")
+            .expect("CLAUDE.md B");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), "A");
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "B",
+            "live CLAUDE.md must repoint to B after switch"
+        );
+
+        let all = db.get_prompts_with_hidden("claude").unwrap();
+        assert!(
+            !all.get("__profile__:A").unwrap().enabled,
+            "outgoing A hidden row must be disabled after switch"
+        );
+        assert!(
+            all.get("__profile__:B").unwrap().enabled,
+            "incoming B hidden row must be enabled after switch"
+        );
+        assert_eq!(
+            all.values().filter(|p| p.enabled).count(),
+            1,
+            "exactly one prompt row may be enabled"
+        );
+    }
+
+    /// 从「有 CLAUDE.md 的 A」切到「无 CLAUDE.md dotfile 的 B」：必须禁用 OUTGOING(A)
+    /// 的隐藏行并清空 live CLAUDE.md（无其它启用 prompt），不得残留 A 的内容。
+    /// 这覆盖了 step 5b `_ =>` 分支仅检查 INCOMING 隐藏行（B 不存在）导致的陈旧泄漏 bug。
+    #[test]
+    #[serial]
+    fn switch_claude_with_to_without_claude_md_blanks_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        // A 有 CLAUDE.md="A"；B 完全没有 CLAUDE.md dotfile。
+        db.save_profile(&profile("A", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save A");
+        db.set_profile_dotfile("A", "CLAUDE.md", "A")
+            .expect("CLAUDE.md A");
+        db.save_profile(&profile("B", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save B");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), "A");
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+
+        // live CLAUDE.md 必须被清空（不再泄漏 A 的内容）。
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "",
+            "switching to a profile WITHOUT CLAUDE.md must blank the live file (no stale A leak)"
+        );
+
+        // A 的隐藏行必须被禁用。
+        assert!(
+            !db.get_prompt_with_hidden("claude", "__profile__:A")
+                .unwrap()
+                .unwrap()
+                .enabled,
+            "outgoing A hidden row must be disabled after switch"
+        );
+
+        // 没有任何隐藏 __profile__ 行处于启用状态。
+        let all = db.get_prompts_with_hidden("claude").unwrap();
+        assert_eq!(
+            all.iter()
+                .filter(|(id, p)| id.starts_with("__profile__:") && p.enabled)
+                .count(),
+            0,
+            "no hidden __profile__ row may remain enabled: {all:?}"
+        );
+    }
+
+    /// deactivate 清空 CLAUDE.md（无其它启用 prompt）。
+    #[test]
+    #[serial]
+    fn deactivate_blanks_claude_md() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("A", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save A");
+        db.set_profile_dotfile("A", "CLAUDE.md", "A")
+            .expect("CLAUDE.md A");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), "A");
+
+        ProfileService::deactivate(&state, AppType::Claude).expect("deactivate");
+
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "",
+            "deactivate must blank CLAUDE.md when no other prompt is enabled"
+        );
+        assert!(
+            !db.get_prompt_with_hidden("claude", "__profile__:A")
+                .unwrap()
+                .unwrap()
+                .enabled,
+            "hidden row must be disabled after deactivate"
+        );
+    }
+
+    /// 重新激活同一 profile：模板覆盖手改的 live CLAUDE.md（模板为权威）。
+    #[test]
+    #[serial]
+    fn reactivate_same_profile_claude_md_template_wins() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        db.save_profile(&profile("A", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save A");
+        db.set_profile_dotfile("A", "CLAUDE.md", "A")
+            .expect("CLAUDE.md A");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A (1st)");
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), "A");
+
+        // user hand-edits the live CLAUDE.md
+        fs::write(&claude_md, "USER EDIT").expect("hand edit");
+
+        // re-activate the SAME profile -> template must win (not the edit)
+        ProfileService::activate(&state, AppType::Claude, "A").expect("re-activate A");
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "A",
+            "re-activating must restore the authoritative template, not the user edit"
+        );
+        assert_eq!(
+            db.get_prompt_with_hidden("claude", "__profile__:A")
+                .unwrap()
+                .unwrap()
+                .content,
+            "A",
+            "hidden row content must remain the template (no live-edit capture)"
+        );
     }
 }

@@ -2766,6 +2766,8 @@
     "varKey": "键",
     "varValue": "值",
     "addVar": "添加变量",
-    "appliedFiles": "已应用文件"
+    "appliedFiles": "已应用文件",
+    "claudeMd": "CLAUDE.md",
+    "claudeMdHint": "此配置文件的 CLAUDE.md 字面内容；当配置文件处于激活状态时，通过提示系统驱动 ~/.claude/CLAUDE.md。不支持 ${VAR} 变量替换。"
   }
 }

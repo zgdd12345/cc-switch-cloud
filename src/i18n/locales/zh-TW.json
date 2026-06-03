@@ -2711,6 +2711,8 @@
     "varKey": "鍵",
     "varValue": "值",
     "addVar": "新增變數",
-    "appliedFiles": "已套用的檔案"
+    "appliedFiles": "已套用的檔案",
+    "claudeMd": "CLAUDE.md",
+    "claudeMdHint": "此設定檔的 CLAUDE.md 字面內容；當設定檔處於使用中狀態時，透過提示系統驅動 ~/.claude/CLAUDE.md。不支援 ${VAR} 變數替換。"
   }
 }

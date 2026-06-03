@@ -9,6 +9,8 @@ pub struct Prompt {
     pub description: Option<String>,
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub hidden: bool,
     #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]

@@ -76,6 +76,7 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS prompts (
             id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL,
             description TEXT, enabled BOOLEAN NOT NULL DEFAULT 1, created_at INTEGER, updated_at INTEGER,
+            hidden BOOLEAN NOT NULL DEFAULT 0,
             PRIMARY KEY (id, app_type)
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -529,6 +530,11 @@ impl Database {
                         log::info!("migrating db v13 -> v14");
                         Self::migrate_v13_to_v14(conn)?;
                         Self::set_user_version(conn, 14)?;
+                    }
+                    14 => {
+                        log::info!("migrating db v14 -> v15");
+                        Self::migrate_v14_to_v15(conn)?;
+                        Self::set_user_version(conn, 15)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1400,6 +1406,16 @@ impl Database {
     fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
         Self::add_column_if_missing(conn, "apply_manifest", "content_hash", "TEXT")?;
         log::info!("v13 -> v14 migration done: apply_manifest.content_hash");
+        Ok(())
+    }
+
+    /// v14 -> v15 迁移：prompts 添加 hidden 列
+    fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+        // prompts 表在极早期/部分迁移的库中可能不存在，与其它迁移保持一致用 table_exists 守卫
+        if Self::table_exists(conn, "prompts")? {
+            Self::add_column_if_missing(conn, "prompts", "hidden", "BOOLEAN NOT NULL DEFAULT 0")?;
+        }
+        log::info!("v14 -> v15 migration done: prompts.hidden");
         Ok(())
     }
 
