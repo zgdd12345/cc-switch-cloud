@@ -152,12 +152,80 @@ fn canon_or_join(base: &Path, sub: &str) -> PathBuf {
     p.canonicalize().unwrap_or(p)
 }
 
+/// Validate a command/agent content name. Mirrors the (private) rules in
+/// command.rs / agent.rs `validate_name`: non-empty, `^[A-Za-z0-9._-]+$`, not
+/// "." / "..", no path separators. This is the SAFETY gate for the base-aware
+/// project content-file writer.
+#[allow(dead_code)] // used by the base-aware project content-file writer wired in a later task
+pub fn validate_content_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty() {
+        return Err(AppError::InvalidInput("内容名不能为空".into()));
+    }
+    if name == "." || name == ".." {
+        return Err(AppError::InvalidInput(format!("非法内容名: {name}")));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(AppError::InvalidInput(format!(
+            "内容名不能包含路径分隔符: {name}"
+        )));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(AppError::InvalidInput(format!(
+            "内容名只能包含字母、数字、'.'、'_'、'-': {name}"
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve `<base>/<name>.md`, validating the name and asserting (defence in
+/// depth) that the resolved file's parent is exactly `base`.
+#[allow(dead_code)] // used by the base-aware project content-file writer wired in a later task
+pub fn content_file_path(base: &Path, name: &str) -> Result<PathBuf, AppError> {
+    validate_content_name(name)?;
+    let path = base.join(format!("{name}.md"));
+    match path.parent() {
+        Some(parent) if parent == base => Ok(path),
+        _ => Err(AppError::InvalidInput(format!(
+            "内容文件路径逃逸出目标目录: {name}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
+
+    #[test]
+    fn content_file_path_validates_and_resolves_under_base() {
+        let dir = TempDir::new().expect("tmp");
+        let base = dir.path();
+        let ok = content_file_path(base, "my-cmd").expect("valid name");
+        assert_eq!(ok, base.join("my-cmd.md"));
+        assert_eq!(ok.parent().unwrap(), base);
+
+        // path-escape / traversal must be rejected
+        for bad in ["..", ".", "a/b", "a\\b", "../escape", ""] {
+            assert!(
+                content_file_path(base, bad).is_err(),
+                "name {bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_content_name_matches_command_rules() {
+        assert!(validate_content_name("ok_name-1.2").is_ok());
+        assert!(validate_content_name("bad/name").is_err());
+        assert!(validate_content_name("..").is_err());
+        assert!(validate_content_name("").is_err());
+        assert!(validate_content_name("space name").is_err());
+    }
 
     struct TempHome {
         dir: TempDir,
