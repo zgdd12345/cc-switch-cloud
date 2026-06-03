@@ -30,6 +30,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
   const [commands, setCommands] = useState("");
   const [agents, setAgents] = useState("");
   const [claudeMd, setClaudeMd] = useState("");
+  const [settings, setSettings] = useState("");
   const [seedId, setSeedId] = useState<string>("");
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
     setCommands((project?.spec.content.commands ?? []).join(", "));
     setAgents((project?.spec.content.agents ?? []).join(", "));
     setClaudeMd(project?.spec.dotfiles?.claudeMd ?? "");
+    setSettings(project?.spec.dotfiles?.settings ?? "");
     setSeedId("");
   }, [open, project]);
 
@@ -59,7 +61,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
         mcp: [],
       },
       vars: {},
-      dotfiles: { claudeMd },
+      dotfiles: { claudeMd, settings },
     };
     try {
       await save.mutateAsync({
@@ -121,6 +123,18 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
           spellCheck={false}
           aria-label={t("projects.claudeMd")}
           placeholder={t("projects.claudeMdPlaceholder")}
+        />
+
+        <label className="text-sm font-medium">{t("projects.settings")}</label>
+        <p className="text-xs text-muted-foreground mt-1">{t("projects.settingsHint")}</p>
+        <textarea
+          className="mt-1 mb-3 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          value={settings}
+          onChange={(e) => setSettings(e.target.value)}
+          rows={6}
+          spellCheck={false}
+          aria-label={t("projects.settings")}
+          placeholder={t("projects.settingsPlaceholder")}
         />
 
         {project && (manifest?.length ?? 0) > 0 && (

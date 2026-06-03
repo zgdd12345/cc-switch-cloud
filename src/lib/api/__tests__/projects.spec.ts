@@ -12,7 +12,7 @@ describe("projectsApi project CLAUDE.md (4b-1)", () => {
     const spec: ProjectSpec = {
       content: { skills: [], commands: [], agents: [], mcp: [] },
       vars: {},
-      dotfiles: { claudeMd: "# memory" },
+      dotfiles: { claudeMd: "# memory", settings: "" },
     };
     expect(spec.dotfiles.claudeMd).toBe("# memory");
   });
@@ -22,7 +22,7 @@ describe("projectsApi project CLAUDE.md (4b-1)", () => {
     const spec: ProjectSpec = {
       content: { skills: [], commands: [], agents: [], mcp: [] },
       vars: {},
-      dotfiles: { claudeMd: "# project rules" },
+      dotfiles: { claudeMd: "# project rules", settings: "" },
     };
     await projectsApi.save(null, "claude", "/abs/repo", "Repo", spec, null);
     expect(invokeMock).toHaveBeenCalledWith("project_save", {

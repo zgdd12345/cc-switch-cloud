@@ -12,15 +12,16 @@ describe("projectsApi", () => {
 
   it("save passes camelCase args including seedFromProfileId", async () => {
     invokeMock.mockResolvedValue({ id: "p1" });
-    await projectsApi.save(null, "claude", "/abs/repo", "Repo", { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "" } }, "local:claude:Src");
+    await projectsApi.save(null, "claude", "/abs/repo", "Repo", { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "", settings: "{\"model\":\"x\"}" } }, "local:claude:Src");
     expect(invokeMock).toHaveBeenCalledWith("project_save", {
       id: null,
       app: "claude",
       enteredPath: "/abs/repo",
       name: "Repo",
-      spec: { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "" } },
+      spec: { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "", settings: "{\"model\":\"x\"}" } },
       seedFromProfileId: "local:claude:Src",
     });
+    expect(invokeMock.mock.calls[0][1].spec.dotfiles.settings).toBe("{\"model\":\"x\"}");
   });
 
   it("apply/detach/list call the right commands", async () => {

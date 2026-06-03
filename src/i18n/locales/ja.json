@@ -2808,6 +2808,9 @@
     "claudeMd": "プロジェクト CLAUDE.md（追加メモリ）",
     "claudeMdPlaceholder": "# プロジェクトルール\nリテラルテキスト — ${VAR} 展開なし。",
     "claudeMdHint": "<プロジェクト>/CLAUDE.md（プロジェクトルート）に出力されます。Claude Code はグローバルの ~/.claude/CLAUDE.md と追加的に読み込みます — 置換ではなく補完です。",
+    "settings": "プロジェクト settings.json（ディープマージ）",
+    "settingsPlaceholder": "{\n  \"model\": \"${ANTHROPIC_MODEL}\"\n}",
+    "settingsHint": "<プロジェクト>/.claude/settings.json にディープマージされます。${VAR} 変数置換に対応。配列フィールド（permissions.allow/deny、hooks）は全体置換 — プロジェクト値が優先し、デタッチ後は元の配列に戻ります。要素の合算は行いません。",
     "appliedFiles": "適用済みファイル",
     "cancel": "キャンセル",
     "save": "保存"

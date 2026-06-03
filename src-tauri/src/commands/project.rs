@@ -152,6 +152,14 @@ pub(crate) fn run_save_logic(
                 spec.dotfiles.claude_md = df.content; // snapshot, not a live link
             }
         }
+        // Seed the settings.json fragment from profile_dotfiles (rel_path=="settings.json")
+        // only when the project has none yet — mirrors the claude_md empty-guard.
+        // One-time snapshot, NOT a live link.
+        if spec.dotfiles.settings.is_empty() {
+            if let Some(df) = state.db.get_profile_dotfile(&pid, "settings.json")? {
+                spec.dotfiles.settings = df.content;
+            }
+        }
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -364,5 +372,63 @@ mod tests {
             None,
         );
         assert!(err.is_err(), "binding HOME must be refused at save time");
+    }
+
+    #[test]
+    #[serial]
+    fn save_seeds_profile_settings_json_as_one_time_snapshot() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = std::sync::Arc::new(crate::database::Database::memory().expect("db"));
+        let state = crate::store::AppState::new(db.clone());
+        // seed a profile with a settings.json dotfile (rel_path == "settings.json").
+        // Mirror save_seeds_profile_claude_md_as_one_time_snapshot exactly: there is
+        // NO `seed_profile` helper in commands/project.rs — construct the Profile
+        // literal inline and call db.save_profile.
+        let prof = crate::app_config::Profile {
+            id: "local:claude:Set".into(),
+            app_type: "claude".into(),
+            name: "Set".into(),
+            description: None,
+            is_active: false,
+            current_provider_id: None,
+            spec: ProfileSpec::default(),
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&prof).expect("save profile");
+        db.set_profile_dotfile("local:claude:Set", "settings.json", r#"{"model":"prof"}"#)
+            .expect("seed settings dotfile");
+
+        let root = home.dir.path().join("seedset");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let spec = crate::app_config::ProjectSpec::default();
+        let created = run_save_logic(
+            &state,
+            None,
+            "claude",
+            root.to_str().unwrap(),
+            None,
+            spec,
+            Some("local:claude:Set".to_string()),
+        )
+        .expect("save");
+        assert_eq!(
+            created.spec.dotfiles.settings, r#"{"model":"prof"}"#,
+            "profile settings.json seeded into project dotfiles"
+        );
+
+        // editing the profile's settings.json afterwards must NOT change the project.
+        db.set_profile_dotfile(
+            "local:claude:Set",
+            "settings.json",
+            r#"{"model":"CHANGED"}"#,
+        )
+        .expect("edit");
+        let reloaded = state.db.get_project(&created.id).unwrap().unwrap();
+        assert_eq!(
+            reloaded.spec.dotfiles.settings, r#"{"model":"prof"}"#,
+            "snapshot, not a live link"
+        );
     }
 }

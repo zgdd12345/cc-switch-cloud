@@ -2808,6 +2808,9 @@
     "claudeMd": "Project CLAUDE.md (additive memory)",
     "claudeMdPlaceholder": "# Project rules\nLiteral text — no ${VAR} rendering.",
     "claudeMdHint": "Materialized to <project>/CLAUDE.md (project root). Claude Code reads it ADDITIVELY with your global ~/.claude/CLAUDE.md — it augments, not replaces.",
+    "settings": "Project settings.json (deep-merged)",
+    "settingsPlaceholder": "{\n  \"model\": \"${ANTHROPIC_MODEL}\"\n}",
+    "settingsHint": "Deep-MERGED into <project>/.claude/settings.json. Supports ${VAR}. Arrays (permissions.allow/deny, hooks) are WHOLE-ARRAY replace — project wins; detach restores your prior array. No element union.",
     "appliedFiles": "Applied Files",
     "cancel": "Cancel",
     "save": "Save"
