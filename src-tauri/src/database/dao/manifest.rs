@@ -25,11 +25,12 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT INTO apply_manifest
-             (channel, profile_id, app_type, target_path, kind, content_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 e.channel,
                 e.profile_id,
+                e.project_id,
                 e.app_type,
                 e.target_path,
                 e.kind,
@@ -50,7 +51,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, channel, profile_id, app_type, target_path, kind, content_hash, created_at
+                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at
                  FROM apply_manifest
                  WHERE profile_id = ?1 AND app_type = ?2
                  ORDER BY id ASC",
@@ -63,23 +64,25 @@ impl Database {
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
                 ))
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut entries = Vec::new();
         for row_res in rows {
-            let (id, channel, p_id, a_type, target_path, kind, content_hash, created_at) =
+            let (id, channel, p_id, proj_id, a_type, target_path, kind, content_hash, created_at) =
                 row_res.map_err(|e| AppError::Database(e.to_string()))?;
             entries.push(ManifestEntry {
                 id,
                 channel,
                 profile_id: p_id,
+                project_id: proj_id,
                 app_type: a_type,
                 target_path,
                 kind,
@@ -152,6 +155,7 @@ mod tests {
             id: 0, // ignored on insert
             channel: "global".into(),
             profile_id: Some(profile_id.into()),
+            project_id: None,
             app_type: app_type.into(),
             target_path: target_path.into(),
             kind: "whole_file".into(),
@@ -194,6 +198,37 @@ mod tests {
         db.clear_manifest_for_profile(p, "claude")?;
         assert_eq!(db.get_manifest_for_profile(p, "claude")?.len(), 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_entry_carries_project_id() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // NOTE: project_id has NO FK (design decision, Task 1), so a manifest row
+        // may carry any project_id string without a matching projects row.
+        let e = ManifestEntry {
+            id: 0,
+            channel: "project:/abs/repo".into(),
+            profile_id: None,
+            project_id: Some("proj:m".into()),
+            app_type: "claude".into(),
+            target_path: "/abs/repo/.claude/commands/foo.md".into(),
+            kind: "command".into(),
+            content_hash: Some("h".into()),
+            created_at: 0,
+        };
+        let id = db.record_manifest_entry(&e)?;
+        assert!(id > 0);
+        // read back via the project-channel getter (added in Task 4b) — for now read raw:
+        let conn = crate::database::lock_conn!(db.conn);
+        let pid: Option<String> = conn
+            .query_row(
+                "SELECT project_id FROM apply_manifest WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .expect("query project_id");
+        assert_eq!(pid.as_deref(), Some("proj:m"));
         Ok(())
     }
 }

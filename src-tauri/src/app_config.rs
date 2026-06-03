@@ -339,6 +339,9 @@ pub struct ManifestEntry {
     pub id: i64,
     pub channel: String,
     pub profile_id: Option<String>,
+    /// Project binding identity (4a). NULL for global-channel rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub app_type: String,
     pub target_path: String,
     pub kind: String,

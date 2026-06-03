@@ -144,6 +144,7 @@ pub fn render_whole_file(
         id: 0,
         channel: "global".to_string(),
         profile_id: Some(profile_id.to_string()),
+        project_id: None,
         app_type: app_type.as_str().to_string(),
         target_path: path.to_string_lossy().to_string(),
         kind: "whole_file".to_string(),
