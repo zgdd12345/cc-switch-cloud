@@ -98,6 +98,18 @@ impl ProjectApplyService {
                             AppError::Message(format!("project skill remove failed: {e}"))
                         })?;
                 }
+            } else if r.kind == "settings_merge" {
+                // CRITICAL (contract c): never let a merge row hit the else
+                // (remove_whole_file_if_owned → whole-file delete of the user's
+                // settings.json). This reverse IS the contract-(d) pre-reapply
+                // ordering: undo our prior merge BEFORE the materialize block (after
+                // the CLAUDE.md block, below) re-reads disk + re-merges, so our prior
+                // write never becomes the new "user baseline".
+                crate::services::settings_merge::reverse_merge(
+                    std::path::Path::new(&r.target_path),
+                    r.owned_keys.as_deref(),
+                    &mut result.warnings,
+                )?;
             } else {
                 crate::services::profile_render::remove_whole_file_if_owned(
                     &r.target_path,
@@ -1380,5 +1392,55 @@ mod tests {
             serde_json::json!("claude-from-var"),
             "${{VAR}} rendered"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn reapply_settings_is_idempotent_and_prior_is_true_user_baseline() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        // frag overwrites a key the USER already has → prior must be the user's value.
+        let (proj, canon) = merge_proj(home.home(), "merge-reapply", r#"{"model": "ours"}"#);
+        db.save_project(&proj).expect("save");
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"model": "USER_ORIGINAL"}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 1");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 2");
+
+        // exactly ONE settings_merge row (pre-delete reverse_merge ran first, then
+        // re-merge recorded a fresh single row).
+        let chan = format!("project:{}", canon.to_string_lossy());
+        let rows = db.get_manifest_for_channel(&chan).unwrap();
+        let m: Vec<_> = rows.iter().filter(|r| r.kind == "settings_merge").collect();
+        assert_eq!(
+            m.len(),
+            1,
+            "double-apply stays idempotent (one settings_merge row)"
+        );
+
+        // the recorded prior for [model] must be the TRUE user original — the
+        // pre-delete reverse restored "USER_ORIGINAL" before the re-merge snapshotted.
+        let env: crate::services::settings_merge::OwnedKeysEnvelope =
+            serde_json::from_str(m[0].owned_keys.as_deref().unwrap()).unwrap();
+        let model_leaf = env
+            .keys
+            .iter()
+            .find(|k| k.path == vec!["model".to_string()])
+            .expect("model leaf");
+        assert!(model_leaf.prior.present);
+        assert_eq!(
+            model_leaf.prior.value,
+            Some(serde_json::json!("USER_ORIGINAL")),
+            "prior must be the TRUE user baseline, NOT our prior write (contract d)"
+        );
+
+        // disk reflects our value after re-apply.
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(disk["model"], serde_json::json!("ours"));
     }
 }
