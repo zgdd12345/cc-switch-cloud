@@ -950,4 +950,55 @@ mod tests {
             "user-edited CLAUDE.md must survive re-apply"
         );
     }
+
+    #[test]
+    #[serial]
+    fn detach_removes_owned_claude_md_via_existing_else_arm() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memdetach", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# owned memory\n".into();
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        let root_file = canon.join("CLAUDE.md");
+        assert!(root_file.is_file(), "applied first");
+
+        // detach: the project_memory row falls into the existing ELSE arm
+        // (remove_whole_file_if_owned) — owned (hash matches) → removed.
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(!root_file.exists(), "owned CLAUDE.md removed on detach");
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert_eq!(
+            db.get_manifest_for_channel(&chan).unwrap().len(),
+            0,
+            "rows cleared"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_preserves_user_edited_claude_md() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = project_at(home.home(), "memdetach2", ProfileContent::default());
+        proj.spec.dotfiles.claude_md = "# owned\n".into();
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        // user edits the materialized CLAUDE.md → hash no longer matches the row →
+        // remove_whole_file_if_owned must skip+warn → file survives detach.
+        let root_file = canon.join("CLAUDE.md");
+        std::fs::write(&root_file, "# USER EDITED\n").expect("edit");
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert_eq!(
+            std::fs::read_to_string(&root_file).unwrap(),
+            "# USER EDITED\n",
+            "user-edited CLAUDE.md must NOT be deleted on detach"
+        );
+    }
 }
