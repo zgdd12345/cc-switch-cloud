@@ -41,6 +41,13 @@ impl ProjectBase {
         format!("project:{}", self.root.to_string_lossy())
     }
 
+    /// Project-root memory file for `app` (4b-1: <root>/CLAUDE.md for Claude).
+    /// ROOT level, NOT under dotdir() — Claude Code reads project-root CLAUDE.md
+    /// ADDITIVELY with the global ~/.claude/CLAUDE.md (ancestor walk-up).
+    pub fn memory_file(&self, app: &AppType) -> PathBuf {
+        self.root.join(app.project_memory_filename())
+    }
+
     /// Resolve + validate a user-entered project root for `app`.
     ///
     /// Returns Err (refusing all writes) when the canonical root equals,
@@ -369,5 +376,24 @@ mod tests {
         std::os::unix::fs::symlink(&real_claude, proj.join(".claude")).expect("symlink");
         #[cfg(unix)]
         assert!(ProjectBase::resolve(proj.to_str().unwrap(), &AppType::Claude).is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn memory_file_is_root_level_not_under_dotdir() {
+        let home = TempHome::new();
+        let proj = home.home().join("work").join("memrepo");
+        std::fs::create_dir_all(&proj).expect("mkdir proj");
+        let base = ProjectBase::resolve(proj.to_str().unwrap(), &AppType::Claude).expect("resolve");
+        // CLAUDE.md lives at the project ROOT, NOT under .claude/
+        assert_eq!(
+            base.memory_file(&AppType::Claude),
+            base.root().join("CLAUDE.md")
+        );
+        assert_ne!(
+            base.memory_file(&AppType::Claude),
+            base.dotdir().join("CLAUDE.md"),
+            "memory_file must use root(), not dotdir()"
+        );
     }
 }
