@@ -305,8 +305,10 @@ pub struct ProjectDotfiles {
 }
 
 /// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b
-/// + device-local dotfiles (4b-1). All fields `#[serde(default)]` so every existing v17
-/// `projects.spec` blob deserializes unchanged (no migration, schema stays v17).
+/// + device-local dotfiles (4b-1).
+///
+/// All fields `#[serde(default)]` so every existing v17 `projects.spec` blob
+/// deserializes unchanged (no migration, schema stays v17).
 #[allow(dead_code)] // wired in Task 3 DAO
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectSpec {
