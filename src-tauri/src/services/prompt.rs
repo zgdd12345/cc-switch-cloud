@@ -109,6 +109,7 @@ impl PromptService {
                                 content: live_content,
                                 description: Some("自动备份的原始提示词".to_string()),
                                 enabled: false,
+                                hidden: false,
                                 created_at: Some(timestamp),
                                 updated_at: Some(timestamp),
                             };
@@ -164,6 +165,7 @@ impl PromptService {
             content,
             description: Some("从现有配置文件导入".to_string()),
             enabled: false,
+            hidden: false,
             created_at: Some(timestamp),
             updated_at: Some(timestamp),
         };
@@ -229,6 +231,7 @@ impl PromptService {
             content,
             description: Some("Automatically imported on first launch".to_string()),
             enabled: true, // 首次导入时自动启用
+            hidden: false,
             created_at: Some(timestamp),
             updated_at: Some(timestamp),
         };

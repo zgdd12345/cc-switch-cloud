@@ -14,7 +14,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, content, description, enabled, created_at, updated_at
+                "SELECT id, name, content, description, enabled, created_at, updated_at, hidden
              FROM prompts WHERE app_type = ?1
              ORDER BY created_at ASC, id ASC",
             )
@@ -29,6 +29,7 @@ impl Database {
                 let enabled: bool = row.get(4)?;
                 let created_at: Option<i64> = row.get(5)?;
                 let updated_at: Option<i64> = row.get(6)?;
+                let hidden: bool = row.get(7)?;
 
                 Ok((
                     id.clone(),
@@ -38,6 +39,7 @@ impl Database {
                         content,
                         description,
                         enabled,
+                        hidden,
                         created_at,
                         updated_at,
                     },
@@ -58,8 +60,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO prompts (
-                id, app_type, name, content, description, enabled, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                id, app_type, name, content, description, enabled, created_at, updated_at, hidden
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 prompt.id,
                 app_type,
@@ -69,6 +71,7 @@ impl Database {
                 prompt.enabled,
                 prompt.created_at,
                 prompt.updated_at,
+                prompt.hidden,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
