@@ -78,6 +78,7 @@ fn project_apply_detach_lifecycle() {
                 mcp: vec![],
             },
             vars: serde_json::Map::new(),
+            dotfiles: Default::default(),
         },
         enabled: true,
         created_at: 0,

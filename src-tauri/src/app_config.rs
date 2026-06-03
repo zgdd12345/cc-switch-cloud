@@ -290,14 +290,32 @@ pub struct Profile {
     pub created_at: i64,
 }
 
-/// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b.
+/// Device-local project dotfiles persisted inside the `projects.spec` JSON blob
+/// (serde-only — NO schema change). 4b-1 ships `claude_md` (a LITERAL project-root
+/// CLAUDE.md). Reserved room for a future `settings`/`mcp` field lands in 4b-2/4b-3.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+// REQUIRED (load-bearing): rename_all=camelCase makes `claude_md` serialize as the wire
+// key `claudeMd`, which MUST match the frontend ProjectSpec.dotfiles.claudeMd type and the
+// on-disk projects.spec JSON blob. Removing this attr silently diverges DB/TS from Rust.
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDotfiles {
+    /// Literal project-root CLAUDE.md content (NO ${VAR} rendering). Empty = none.
+    #[serde(default)]
+    pub claude_md: String,
+}
+
+/// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b
+/// + device-local dotfiles (4b-1). All fields `#[serde(default)]` so every existing v17
+/// `projects.spec` blob deserializes unchanged (no migration, schema stays v17).
 #[allow(dead_code)] // wired in Task 3 DAO
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectSpec {
     #[serde(default)]
     pub content: ProfileContent, // REUSE existing struct (skills/commands/agents/mcp)
     #[serde(default)]
-    pub vars: serde_json::Map<String, serde_json::Value>, // reserved for 4b dotfiles/${VAR}
+    pub vars: serde_json::Map<String, serde_json::Value>, // reserved for 4b ${VAR} (NOT used in 4b-1)
+    #[serde(default)]
+    pub dotfiles: ProjectDotfiles, // 4b-1: literal project-root CLAUDE.md
 }
 
 /// A device-local binding of a real project directory to an own content set.
@@ -1384,6 +1402,31 @@ mod project_struct_tests {
         assert_eq!(back.id, "proj:1");
         assert!(back.enabled);
         assert!(back.spec.content.skills.is_empty());
+    }
+
+    #[test]
+    fn old_project_spec_json_without_dotfiles_still_deserializes() {
+        // An OLD v17 spec blob (pre-4b-1) has NO "dotfiles" key. #[serde(default)]
+        // must let it deserialize with an empty claude_md — proving NO migration is needed.
+        let old = r#"{"content":{"skills":[],"commands":["c"],"agents":[],"mcp":[]},"vars":{}}"#;
+        let spec: super::ProjectSpec =
+            serde_json::from_str(old).expect("old spec must deserialize");
+        assert_eq!(spec.content.commands, vec!["c"]);
+        assert_eq!(
+            spec.dotfiles.claude_md, "",
+            "missing dotfiles defaults to empty"
+        );
+
+        // Round-trip a populated dotfiles set.
+        let mut s2 = super::ProjectSpec::default();
+        s2.dotfiles.claude_md = "# Project memory\nbe terse".into();
+        let json = serde_json::to_string(&s2).expect("serialize");
+        assert!(
+            json.contains("\"claudeMd\""),
+            "camelCase key expected: {json}"
+        );
+        let back: super::ProjectSpec = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back.dotfiles.claude_md, "# Project memory\nbe terse");
     }
 }
 

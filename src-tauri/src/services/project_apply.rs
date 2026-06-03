@@ -379,6 +379,7 @@ mod tests {
             spec: ProjectSpec {
                 content,
                 vars: serde_json::Map::new(),
+                dotfiles: Default::default(),
             },
             enabled: true,
             created_at: 1,

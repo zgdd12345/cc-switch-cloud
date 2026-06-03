@@ -168,6 +168,7 @@ mod tests {
                     mcp: vec![],
                 },
                 vars: serde_json::Map::new(),
+                dotfiles: Default::default(),
             },
             enabled: true,
             created_at: 100,
