@@ -12,6 +12,7 @@ pub mod omo;
 pub mod profile;
 pub mod profile_render;
 pub mod profile_vars;
+pub mod project_paths;
 pub mod prompt;
 pub mod provider;
 pub mod proxy;
