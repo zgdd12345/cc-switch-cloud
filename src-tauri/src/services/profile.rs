@@ -282,6 +282,24 @@ impl ProfileService {
         // - 绝不通过 upsert_prompt(enabled=true) 启用隐藏行（upsert 不 sweep）。
         // 放在步骤 7（set_active）之后、步骤 8（settings 重建）之前，与 set_active 同处倒数。
         if matches!(app_type, AppType::Claude) {
+            // 先禁用 OUTGOING profile 的隐藏行（若存在、是 claude profile、且与 INCOMING 不同），
+            // 镜像 deactivate 步骤 2b。否则「从有 CLAUDE.md 的 A 切到无 CLAUDE.md 的 B」会进入
+            // 下方 `_ =>` 分支，仅检查 INCOMING(B) 的隐藏行（不存在）-> no-op，导致 A 的隐藏行
+            // 仍 enabled、~/.claude/CLAUDE.md 仍残留 A 的内容（违反单启用不变量 + 泄漏前一 profile）。
+            // 当 INCOMING 有 CLAUDE.md 时，下方 enable_prompt 的 single-enabled sweep 也会覆盖这一步
+            // （与此显式禁用幂等）；当 INCOMING 无 CLAUDE.md 时，正是这一步拆掉 A。
+            if let Some(out) = &outgoing {
+                if out.app_type == AppType::Claude.as_str() && out.id != profile_id {
+                    let out_hidden = format!("__profile__:{}", out.id);
+                    if let Some(mut row) = state.db.get_prompt_with_hidden("claude", &out_hidden)? {
+                        if row.enabled {
+                            row.enabled = false;
+                            PromptService::upsert_prompt(state, AppType::Claude, &out_hidden, row)?;
+                        }
+                    }
+                }
+            }
+
             let hidden_id = format!("__profile__:{profile_id}");
             match state.db.get_profile_dotfile(profile_id, "CLAUDE.md")? {
                 Some(df) if !df.content.trim().is_empty() => {
@@ -1769,6 +1787,62 @@ mod tests {
             all.values().filter(|p| p.enabled).count(),
             1,
             "exactly one prompt row may be enabled"
+        );
+    }
+
+    /// 从「有 CLAUDE.md 的 A」切到「无 CLAUDE.md dotfile 的 B」：必须禁用 OUTGOING(A)
+    /// 的隐藏行并清空 live CLAUDE.md（无其它启用 prompt），不得残留 A 的内容。
+    /// 这覆盖了 step 5b `_ =>` 分支仅检查 INCOMING 隐藏行（B 不存在）导致的陈旧泄漏 bug。
+    #[test]
+    #[serial]
+    fn switch_claude_with_to_without_claude_md_blanks_file() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let state = AppState::new(db.clone());
+
+        db.save_provider("claude", &claude_provider("prov"))
+            .expect("save provider");
+
+        // A 有 CLAUDE.md="A"；B 完全没有 CLAUDE.md dotfile。
+        db.save_profile(&profile("A", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save A");
+        db.set_profile_dotfile("A", "CLAUDE.md", "A")
+            .expect("CLAUDE.md A");
+        db.save_profile(&profile("B", content(&[], &[], &[], &[]), Some("prov")))
+            .expect("save B");
+
+        let claude_md = home.claude_dir().join("CLAUDE.md");
+
+        ProfileService::activate(&state, AppType::Claude, "A").expect("activate A");
+        assert_eq!(fs::read_to_string(&claude_md).unwrap(), "A");
+
+        ProfileService::activate(&state, AppType::Claude, "B").expect("activate B");
+
+        // live CLAUDE.md 必须被清空（不再泄漏 A 的内容）。
+        assert_eq!(
+            fs::read_to_string(&claude_md).unwrap(),
+            "",
+            "switching to a profile WITHOUT CLAUDE.md must blank the live file (no stale A leak)"
+        );
+
+        // A 的隐藏行必须被禁用。
+        assert!(
+            !db.get_prompt_with_hidden("claude", "__profile__:A")
+                .unwrap()
+                .unwrap()
+                .enabled,
+            "outgoing A hidden row must be disabled after switch"
+        );
+
+        // 没有任何隐藏 __profile__ 行处于启用状态。
+        let all = db.get_prompts_with_hidden("claude").unwrap();
+        assert_eq!(
+            all.iter()
+                .filter(|(id, p)| id.starts_with("__profile__:") && p.enabled)
+                .count(),
+            0,
+            "no hidden __profile__ row may remain enabled: {all:?}"
         );
     }
 

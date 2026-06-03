@@ -36,6 +36,18 @@ impl PromptService {
         _id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
+        // 防御：保留命名空间 `__profile__:` 仅供 ProfileService 内部路径写入
+        // （它们走 save_prompt 直连 DAO + enable_prompt 来启用，绝不经此处 enabled=true）。
+        // 唯一会经过本函数的合法 __profile__ 调用都是 enabled=false 的禁用路径，故仅当
+        // 试图「启用」一条保留行时拒绝——这正是会破坏单启用不变量 / 影子覆盖隐藏行的危险动作。
+        if prompt.enabled
+            && (_id.starts_with("__profile__:") || prompt.id.starts_with("__profile__:"))
+        {
+            return Err(AppError::InvalidInput(
+                "不能通过 upsert 启用保留命名空间 __profile__: 的提示词".to_string(),
+            ));
+        }
+
         // 检查是否为已启用的提示词
         let is_enabled = prompt.enabled;
 
