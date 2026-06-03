@@ -895,3 +895,79 @@ fn prompts_has_hidden_after_migrate() {
         "prompts must have a hidden column after v14 -> v15 migration"
     );
 }
+
+#[test]
+fn get_prompts_filters_hidden_but_with_hidden_sees_all() {
+    let db = Database::memory().expect("create memory db");
+
+    let visible = crate::prompt::Prompt {
+        id: "visible-1".to_string(),
+        name: "Visible".to_string(),
+        content: "visible content".to_string(),
+        description: None,
+        enabled: true,
+        hidden: false,
+        created_at: Some(1),
+        updated_at: Some(1),
+    };
+    let hidden = crate::prompt::Prompt {
+        id: "hidden-1".to_string(),
+        name: "Hidden".to_string(),
+        content: "hidden content".to_string(),
+        description: None,
+        enabled: true,
+        hidden: true,
+        created_at: Some(2),
+        updated_at: Some(2),
+    };
+
+    db.save_prompt("claude", &visible).expect("save visible");
+    db.save_prompt("claude", &hidden).expect("save hidden");
+
+    // get_prompts must only return the visible row
+    let visible_only = db.get_prompts("claude").expect("get_prompts");
+    assert_eq!(
+        visible_only.len(),
+        1,
+        "get_prompts should return only visible rows"
+    );
+    assert!(
+        visible_only.contains_key("visible-1"),
+        "get_prompts should contain the visible prompt"
+    );
+    assert!(
+        !visible_only.contains_key("hidden-1"),
+        "get_prompts must not contain the hidden prompt"
+    );
+
+    // get_prompts_with_hidden must return both rows
+    let all = db
+        .get_prompts_with_hidden("claude")
+        .expect("get_prompts_with_hidden");
+    assert_eq!(
+        all.len(),
+        2,
+        "get_prompts_with_hidden should return both rows"
+    );
+    assert!(all.contains_key("visible-1"));
+    assert!(all.contains_key("hidden-1"));
+
+    // get_prompt_with_hidden must find a hidden row by id
+    let fetched_hidden = db
+        .get_prompt_with_hidden("claude", "hidden-1")
+        .expect("get_prompt_with_hidden");
+    assert!(
+        fetched_hidden.is_some(),
+        "get_prompt_with_hidden should find the hidden prompt"
+    );
+    assert_eq!(fetched_hidden.unwrap().id, "hidden-1");
+
+    // get_prompt_with_hidden must return None for a missing id
+    let missing = db
+        .get_prompt_with_hidden("claude", "does-not-exist")
+        .expect("get_prompt_with_hidden missing");
+    assert!(
+        missing.is_none(),
+        "get_prompt_with_hidden should return None for a missing id"
+    );
+}
