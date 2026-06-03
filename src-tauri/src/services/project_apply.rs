@@ -289,6 +289,41 @@ impl ProjectApplyService {
     }
 }
 
+/// Hash-gated whole-file write for a project dotfile (4b-1). Mirrors
+/// `profile_render::render_whole_file`'s OWNERSHIP contract but is base-agnostic:
+/// it does NOT use `validate_rel_path` / `~/.claude` and does NOT stamp a manifest
+/// row (the caller records via `Self::row`). The abs path is already past
+/// `ProjectBase::resolve`'s HOME/symlink gate and the filename is a compile-time
+/// constant ("CLAUDE.md"), so there is no traversal risk.
+///
+/// - exists AND (prior_owned_hash is None OR disk_hash != prior_owned_hash):
+///   skip + warn, return Ok(None) (never overwrite a user-edited/unmanaged file).
+/// - absent, OR disk_hash == prior_owned_hash: atomic_write the content, return
+///   Ok(Some(sha256(content))).
+#[allow(dead_code)] // consumed by apply's CLAUDE.md block (Task 4)
+fn write_project_whole_file(
+    abs_path: &Path,
+    content: &str,
+    prior_owned_hash: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    if abs_path.exists() {
+        let disk = std::fs::read(abs_path).map_err(|e| AppError::io(abs_path, e))?;
+        let disk_hash = crate::services::profile_render::content_hash(&disk);
+        let owned = matches!(prior_owned_hash, Some(h) if h == disk_hash);
+        if !owned {
+            log::warn!(
+                "拒绝覆盖未托管/被用户编辑的项目文件: {}",
+                abs_path.display()
+            );
+            return Ok(None);
+        }
+    }
+    atomic_write(abs_path, content.as_bytes())?;
+    Ok(Some(crate::services::profile_render::content_hash(
+        content.as_bytes(),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,6 +761,60 @@ mod tests {
             db.get_manifest_for_channel(gone_chan).unwrap().len(),
             0,
             "apply() must prune the stale path-gone channel via apply-time cleanup"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_writes_when_absent() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        // absent → write, returns Some(hash) of the content.
+        let h = super::write_project_whole_file(&target, "# memory", None).expect("write");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "# memory");
+        assert_eq!(
+            h,
+            Some(crate::services::profile_render::content_hash(b"# memory"))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_skips_user_edited_file() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        // file exists with content we do NOT own (prior hash None) → skip + Ok(None).
+        std::fs::write(&target, "USER WROTE THIS").expect("seed");
+        let r = super::write_project_whole_file(&target, "MANAGED", None).expect("skip");
+        assert_eq!(r, None, "must skip an unmanaged file");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "USER WROTE THIS");
+
+        // file exists, prior hash present but disk hash differs (user edited) → skip.
+        let prior = crate::services::profile_render::content_hash(b"OLD MANAGED");
+        let r2 = super::write_project_whole_file(&target, "MANAGED", Some(&prior)).expect("skip2");
+        assert_eq!(r2, None, "disk_hash != prior_owned_hash must skip");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "USER WROTE THIS");
+    }
+
+    #[test]
+    #[serial]
+    fn write_project_whole_file_overwrites_when_owned() {
+        let _home = TempHome::new();
+        let dir = TempDir::new().expect("tmp");
+        let target = dir.path().join("CLAUDE.md");
+        std::fs::write(&target, "OLD MANAGED").expect("seed");
+        // disk_hash == prior_owned_hash → we own it → overwrite, return new hash.
+        let prior = crate::services::profile_render::content_hash(b"OLD MANAGED");
+        let h =
+            super::write_project_whole_file(&target, "NEW MANAGED", Some(&prior)).expect("write");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "NEW MANAGED");
+        assert_eq!(
+            h,
+            Some(crate::services::profile_render::content_hash(
+                b"NEW MANAGED"
+            ))
         );
     }
 }
