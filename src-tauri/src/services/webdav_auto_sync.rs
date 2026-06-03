@@ -219,6 +219,8 @@ mod tests {
         assert!(should_trigger_for_table("profile_dotfiles"));
         // apply_manifest is device-local realized state — must NOT trigger sync
         assert!(!should_trigger_for_table("apply_manifest"));
+        // projects bindings are DEVICE-LOCAL (decision #4) — must NOT trigger WebDAV sync
+        assert!(!should_trigger_for_table("projects"));
     }
 
     #[test]

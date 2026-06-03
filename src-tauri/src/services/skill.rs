@@ -1840,6 +1840,55 @@ impl SkillService {
         Self::remove_managed_app_skill(&skill_path, directory, app)
     }
 
+    /// 同步 Skill 到 *项目* skills 目录（显式 base，强制 COPY；绝不 symlink）。
+    ///
+    /// 与 sync_to_app_dir 的区别：base 由调用方给定（= <project>/.claude/skills），
+    /// 且无视全局 SyncMethod 设置 —— 项目内容必须自包含、git/WebDAV 可携带，故恒用 copy。
+    /// 复用 3a 的数据安全不变式：dest 是真实(非 symlink) 用户目录时跳过 + warn，绝不销毁。
+    pub fn sync_to_project_dir(directory: &str, skills_base: &Path, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+        let ssot_dir = Self::get_ssot_dir()?;
+        let source = ssot_dir.join(directory);
+        Self::validate_sync_source_dir(&source, directory)?;
+
+        fs::create_dir_all(skills_base)?;
+        let dest = skills_base.join(directory);
+
+        // 数据安全不变式（与 sync_to_app_dir 对称）：真实(非 symlink) 用户目录 → 跳过保护。
+        if dest.exists()
+            && !Self::is_symlink(&dest)
+            && !Self::is_managed_app_skill(&dest, directory)
+        {
+            log::warn!(
+                "project skill {directory}: a real user directory exists at the project skills path; skipping to protect user data"
+            );
+            return Ok(());
+        }
+
+        // 强制 COPY（不走 symlink 分支）。
+        Self::replace_dest_with_copy(&source, &dest, directory)?;
+        log::debug!(
+            "Skill {directory} 已通过复制同步到项目目录 {}",
+            dest.display()
+        );
+        Ok(())
+    }
+
+    /// 从 *项目* skills 目录删除 Skill（仅删除 AgentHub 托管产物：symlink 或哈希匹配 SSOT 的 copy）。
+    pub fn remove_from_project_dir(
+        directory: &str,
+        skills_base: &Path,
+        app: &AppType,
+    ) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+        let dest = skills_base.join(directory);
+        Self::remove_managed_app_skill(&dest, directory, app)
+    }
+
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
@@ -3131,7 +3180,53 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use serial_test::serial;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
+
+    /// 测试用临时 HOME 守卫，与 profile.rs 中的模式对称。
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = std::env::var("HOME").ok();
+            let original_userprofile = std::env::var("USERPROFILE").ok();
+            let original_test_home = std::env::var("CC_SWITCH_TEST_HOME").ok();
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("USERPROFILE", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
@@ -3365,5 +3460,57 @@ mod tests {
         if let Err(payload) = outcome {
             std::panic::resume_unwind(payload);
         }
+    }
+
+    #[test]
+    #[serial]
+    fn sync_to_project_dir_copies_real_dir_not_symlink() {
+        let _home = TempHome::new();
+        // materialize an SSOT skill with SKILL.md
+        let ssot = SkillService::get_ssot_dir().expect("ssot");
+        let sdir = ssot.join("proj-skill");
+        std::fs::create_dir_all(&sdir).expect("mkdir ssot skill");
+        std::fs::write(sdir.join("SKILL.md"), "---\nname: proj-skill\n---\n# x\n").expect("write");
+
+        let tmp = tempfile::TempDir::new().expect("proj tmp");
+        let skills_base = tmp.path().join(".claude").join("skills");
+
+        SkillService::sync_to_project_dir("proj-skill", &skills_base, &AppType::Claude)
+            .expect("sync to project");
+
+        let dest = skills_base.join("proj-skill");
+        assert!(
+            dest.join("SKILL.md").is_file(),
+            "skill must be materialized"
+        );
+        // CRITICAL: it is a REAL COPY, not a symlink
+        let meta = std::fs::symlink_metadata(&dest).expect("meta");
+        assert!(
+            !meta.file_type().is_symlink(),
+            "project skill MUST be a copy, not a symlink"
+        );
+
+        // remove path is owned-safe (managed copy) → removed
+        SkillService::remove_from_project_dir("proj-skill", &skills_base, &AppType::Claude)
+            .expect("remove");
+        assert!(!dest.exists(), "managed copy should be removed on detach");
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_project_dir_skips_real_user_dir() {
+        let _home = TempHome::new();
+        let tmp = tempfile::TempDir::new().expect("proj tmp");
+        let skills_base = tmp.path().join(".claude").join("skills");
+        let user_dir = skills_base.join("user-skill");
+        std::fs::create_dir_all(&user_dir).expect("mkdir user dir");
+        std::fs::write(user_dir.join("notes.txt"), "user data").expect("write user file");
+        // no SSOT source for "user-skill" → not a managed copy → must be skipped
+        SkillService::remove_from_project_dir("user-skill", &skills_base, &AppType::Claude)
+            .expect("remove (skip)");
+        assert!(
+            user_dir.join("notes.txt").is_file(),
+            "user dir must NOT be deleted"
+        );
     }
 }

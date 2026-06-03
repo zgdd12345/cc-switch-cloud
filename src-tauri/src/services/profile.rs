@@ -449,7 +449,7 @@ impl ProfileService {
     /// `"tag matched no {type_label}s: @{tag}"`, while a literal miss yields
     /// `"{type_label} not found: {entry}"`. Neither is an error — the want-set simply
     /// excludes the unmatched selector (zero expansion).
-    fn resolve_selectors(
+    pub(crate) fn resolve_selectors(
         type_label: &str,
         spec: &[String],
         items: &[(String, Vec<String>)],
