@@ -320,11 +320,12 @@ impl ProjectApplyService {
     /// Build the layered `${VAR}` map for a PROJECT (contract g). Layers low→high:
     /// 1. allowlisted process env (profile_vars::ENV_ALLOWLIST_PREFIXES),
     /// 2. active provider settings_config.env (get_effective_current_provider),
-    /// 3. project.spec.vars (TOP). Does NOT call profile_vars::build_var_map — that
-    /// would inject the GLOBAL active profile's vars, which must NOT leak into a
-    /// project render. reverse_merge does NOT re-render, so a value change between
-    /// apply and detach cannot defeat teardown (teardown is a pure fn of the
-    /// stored snapshot).
+    /// 3. project.spec.vars (TOP).
+    ///
+    /// Does NOT call profile_vars::build_var_map — that would inject the GLOBAL
+    /// active profile's vars, which must NOT leak into a project render.
+    /// reverse_merge does NOT re-render, so a value change between apply and
+    /// detach cannot defeat teardown (teardown is a pure fn of the stored snapshot).
     pub fn build_project_var_map(
         db: &crate::database::Database,
         app_type: &AppType,
