@@ -289,6 +289,7 @@ impl ProjectApplyService {
             target_path: target.to_string_lossy().to_string(),
             kind: kind.to_string(),
             content_hash: Some(content_hash.to_string()),
+            owned_keys: None,
             created_at: chrono::Utc::now().timestamp(),
         }
     }
@@ -690,6 +691,7 @@ mod tests {
             content_hash: Some(crate::services::profile_render::content_hash(
                 b"FOREIGN USER DATA",
             )),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();
@@ -727,6 +729,7 @@ mod tests {
             target_path: "/no/such/path/xyz/.claude/commands/a.md".into(),
             kind: "command".into(),
             content_hash: Some("h".into()),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();
@@ -764,6 +767,7 @@ mod tests {
             target_path: "/no/such/gone/repo/.claude/commands/old.md".into(),
             kind: "command".into(),
             content_hash: Some("h".into()),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();

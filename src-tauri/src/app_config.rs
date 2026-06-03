@@ -367,6 +367,8 @@ pub struct ManifestEntry {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_keys: Option<String>,
     pub created_at: i64,
 }
 
