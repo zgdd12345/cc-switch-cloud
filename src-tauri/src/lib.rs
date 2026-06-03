@@ -38,7 +38,7 @@ mod usage_script;
 
 pub use app_config::{
     AppType, InstalledCommand, InstalledSkill, McpApps, McpServer, MultiAppConfig, ProfileContent,
-    Project, ProjectSpec, SkillApps,
+    Project, ProjectDotfiles, ProjectSpec, SkillApps,
 };
 pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
 pub use commands::open_provider_terminal;

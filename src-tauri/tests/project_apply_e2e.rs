@@ -78,7 +78,9 @@ fn project_apply_detach_lifecycle() {
                 mcp: vec![],
             },
             vars: serde_json::Map::new(),
-            dotfiles: Default::default(),
+            dotfiles: agenthub_lib::ProjectDotfiles {
+                claude_md: "# e2e project memory\n".into(),
+            },
         },
         enabled: true,
         created_at: 0,
@@ -101,4 +103,20 @@ fn project_apply_detach_lifecycle() {
     ProjectApplyService::detach(&state, "proj:e2e").unwrap();
     assert!(!f.exists(), "owned file removed");
     assert!(user.is_file(), "user file untouched");
+
+    // (re-apply to re-materialize after detach removed it) — apply once more to assert
+    // CLAUDE.md materializes at ROOT, then a fresh detach removes it.
+    ProjectApplyService::apply(&state, "proj:e2e").unwrap();
+    let claude_md = canon.join("CLAUDE.md");
+    assert_eq!(
+        std::fs::read_to_string(&claude_md).unwrap(),
+        "# e2e project memory\n",
+        "project CLAUDE.md materialized at ROOT"
+    );
+    assert!(
+        !canon.join(".claude").join("CLAUDE.md").exists(),
+        "never under .claude/"
+    );
+    ProjectApplyService::detach(&state, "proj:e2e").unwrap();
+    assert!(!claude_md.exists(), "owned CLAUDE.md removed on detach");
 }
