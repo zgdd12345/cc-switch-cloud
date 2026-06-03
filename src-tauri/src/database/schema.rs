@@ -178,7 +178,26 @@ impl Database {
         kind         TEXT NOT NULL,
         created_at   INTEGER NOT NULL DEFAULT 0,
         content_hash TEXT,
+        project_id   TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 6e0. Projects 表（schema v17）—— 设备本地，绑定真实项目目录到自有内容集
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (
+        id           TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        entered_path TEXT NOT NULL,
+        app_type     TEXT NOT NULL,
+        name         TEXT,
+        spec         TEXT NOT NULL DEFAULT '{}',
+        enabled      BOOLEAN NOT NULL DEFAULT 1,
+        created_at   INTEGER NOT NULL DEFAULT 0,
+        updated_at   INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (project_path, app_type)
     )",
             [],
         )
@@ -541,6 +560,13 @@ impl Database {
                         log::info!("migrating db v15 -> v16");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!(
+                            "migrating db v16 -> v17 (projects + apply_manifest.project_id)"
+                        );
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1432,6 +1458,40 @@ impl Database {
             Self::add_column_if_missing(conn, "skills", "tags", "TEXT NOT NULL DEFAULT '[]'")?;
         }
         log::info!("v15 -> v16 migration done: skills.tags");
+        Ok(())
+    }
+
+    /// v16 -> v17 迁移：新增 projects 表 + apply_manifest.project_id 列（设备本地项目绑定）。
+    ///
+    /// 注意（与 migrate_v13_to_v14 同理）：`create_tables_on_conn` 已按最新（v17）结构建表，
+    /// 全新库会从 0 直接跑到 SCHEMA_VERSION，此时 projects 已存在、project_id 已含，故用
+    /// `CREATE TABLE IF NOT EXISTS` + `add_column_if_missing`（幂等）。设计决策：apply_manifest
+    /// 的 project_id 为裸 `TEXT` 列、**不带 FK**（base CREATE 与迁移一致，从而新库/旧库收敛；
+    /// 且 FK 会阻挡 Task 9 故意写入的“外来/孤儿”行，那些行正是用来证明 §3.2 路径复用保护的）。
+    /// 身份关系在 DAO + apply 重算守卫（按 project_id 跳过外来行）+ prune 中强制，
+    /// channel + project_id 共同构成身份键。
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (
+        id           TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        entered_path TEXT NOT NULL,
+        app_type     TEXT NOT NULL,
+        name         TEXT,
+        spec         TEXT NOT NULL DEFAULT '{}',
+        enabled      BOOLEAN NOT NULL DEFAULT 1,
+        created_at   INTEGER NOT NULL DEFAULT 0,
+        updated_at   INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (project_path, app_type)
+    )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if Self::table_exists(conn, "apply_manifest")? {
+            Self::add_column_if_missing(conn, "apply_manifest", "project_id", "TEXT")?;
+        }
+        log::info!("v16 -> v17 migration done: projects table + apply_manifest.project_id");
         Ok(())
     }
 

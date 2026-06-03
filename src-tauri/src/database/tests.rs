@@ -1026,3 +1026,47 @@ fn get_prompts_filters_hidden_but_with_hidden_sees_all() {
         "get_prompt_with_hidden should return None for a missing id"
     );
 }
+
+#[test]
+fn schema_v17_creates_projects_table_and_manifest_project_id() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    // fresh base schema must already contain v17 shape
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count projects");
+    assert_eq!(n, 1, "projects table must exist in base create_tables");
+    assert!(
+        Database::has_column(&conn, "apply_manifest", "project_id").expect("has_column"),
+        "apply_manifest.project_id must exist in base create_tables"
+    );
+}
+
+#[test]
+fn schema_migration_v16_to_v17_reaches_current() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::set_user_version(&conn, 16).expect("seed v16");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version"),
+        SCHEMA_VERSION
+    );
+    assert_eq!(SCHEMA_VERSION, 17, "SCHEMA_VERSION must be bumped to 17");
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(n, 1, "projects table must exist after migration");
+    assert!(
+        Database::has_column(&conn, "apply_manifest", "project_id").expect("has_column"),
+        "apply_manifest.project_id must exist after migration"
+    );
+}
