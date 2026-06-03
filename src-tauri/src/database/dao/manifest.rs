@@ -25,8 +25,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT INTO apply_manifest
-             (channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (channel, profile_id, project_id, app_type, target_path, kind, content_hash, owned_keys, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 e.channel,
                 e.profile_id,
@@ -35,6 +35,7 @@ impl Database {
                 e.target_path,
                 e.kind,
                 e.content_hash,
+                e.owned_keys,
                 e.created_at,
             ],
         )
@@ -51,7 +52,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at
+                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, owned_keys, created_at
                  FROM apply_manifest
                  WHERE profile_id = ?1 AND app_type = ?2
                  ORDER BY id ASC",
@@ -69,15 +70,26 @@ impl Database {
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
-                    row.get::<_, i64>(8)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, i64>(9)?,
                 ))
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut entries = Vec::new();
         for row_res in rows {
-            let (id, channel, p_id, proj_id, a_type, target_path, kind, content_hash, created_at) =
-                row_res.map_err(|e| AppError::Database(e.to_string()))?;
+            let (
+                id,
+                channel,
+                p_id,
+                proj_id,
+                a_type,
+                target_path,
+                kind,
+                content_hash,
+                owned_keys,
+                created_at,
+            ) = row_res.map_err(|e| AppError::Database(e.to_string()))?;
             entries.push(ManifestEntry {
                 id,
                 channel,
@@ -87,6 +99,7 @@ impl Database {
                 target_path,
                 kind,
                 content_hash,
+                owned_keys,
                 created_at,
             });
         }
@@ -134,7 +147,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at
+                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, owned_keys, created_at
                  FROM apply_manifest
                  WHERE channel = ?1
                  ORDER BY id ASC",
@@ -151,7 +164,8 @@ impl Database {
                     target_path: row.get(5)?,
                     kind: row.get(6)?,
                     content_hash: row.get(7)?,
-                    created_at: row.get(8)?,
+                    owned_keys: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -221,6 +235,7 @@ mod tests {
             target_path: target_path.into(),
             kind: "whole_file".into(),
             content_hash: Some("abc123".into()),
+            owned_keys: None,
             created_at: 0,
         }
     }
@@ -242,15 +257,31 @@ mod tests {
         assert_eq!(rows[0].id, id1);
         assert_eq!(rows[0].target_path, "/home/user/.claude/settings.json");
         assert_eq!(rows[0].content_hash, Some("abc123".into()));
+        assert_eq!(rows[0].owned_keys, None, "content rows carry no owned_keys");
+
+        // a settings_merge-style row carrying an owned_keys envelope round-trips.
+        let mut e_owned = make_entry(p, "claude", "/home/user/.claude/settings.json");
+        e_owned.kind = "settings_merge".into();
+        e_owned.content_hash = None;
+        e_owned.owned_keys = Some(r#"{"v":1,"keys":[]}"#.into());
+        let id_owned = db.record_manifest_entry(&e_owned)?;
+        let back = db
+            .get_manifest_for_profile(p, "claude")?
+            .into_iter()
+            .find(|r| r.id == id_owned)
+            .expect("owned row");
+        assert_eq!(back.owned_keys.as_deref(), Some(r#"{"v":1,"keys":[]}"#));
+        assert_eq!(back.content_hash, None);
 
         // record a second entry
         let e2 = make_entry(p, "claude", "/home/user/.claude/CLAUDE.md");
         let id2 = db.record_manifest_entry(&e2)?;
         assert!(id2 > id1);
-        assert_eq!(db.get_manifest_for_profile(p, "claude")?.len(), 2);
+        // now 3 rows: e1, e_owned, e2
+        assert_eq!(db.get_manifest_for_profile(p, "claude")?.len(), 3);
 
-        // delete_manifest_entries(&[id1]) leaves one
-        db.delete_manifest_entries(&[id1])?;
+        // delete_manifest_entries(&[id1, id_owned]) leaves one
+        db.delete_manifest_entries(&[id1, id_owned])?;
         let remaining = db.get_manifest_for_profile(p, "claude")?;
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, id2);
@@ -278,6 +309,7 @@ mod tests {
             target_path: "/g".into(),
             kind: "command".into(),
             content_hash: None,
+            owned_keys: None,
             created_at: 0,
         };
         db.record_manifest_entry(&g)?;
@@ -294,6 +326,7 @@ mod tests {
                 target_path: tp.into(),
                 kind: "command".into(),
                 content_hash: Some("h".into()),
+                owned_keys: None,
                 created_at: 0,
             })?;
         }
@@ -341,6 +374,7 @@ mod tests {
             target_path: "/abs/repo/.claude/commands/foo.md".into(),
             kind: "command".into(),
             content_hash: Some("h".into()),
+            owned_keys: None,
             created_at: 0,
         };
         let id = db.record_manifest_entry(&e)?;

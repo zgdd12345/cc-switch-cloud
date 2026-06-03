@@ -2753,6 +2753,9 @@
     "claudeMd": "專案 CLAUDE.md（疊加記憶）",
     "claudeMdPlaceholder": "# 專案規則\n純文字字面值——不做 ${VAR} 渲染。",
     "claudeMdHint": "寫入 <專案>/CLAUDE.md（專案根目錄）。Claude Code 會與全域 ~/.claude/CLAUDE.md 疊加讀取——是補充而非取代。",
+    "settings": "專案 settings.json（深度合併）",
+    "settingsPlaceholder": "{\n  \"model\": \"${ANTHROPIC_MODEL}\"\n}",
+    "settingsHint": "深度合併到 <專案>/.claude/settings.json。支援 ${VAR} 變數替換。陣列欄位（permissions.allow/deny、hooks）整體取代——專案值優先；解除繫結後恢復先前的陣列。不做元素合併。",
     "appliedFiles": "已套用的檔案",
     "cancel": "取消",
     "save": "儲存"

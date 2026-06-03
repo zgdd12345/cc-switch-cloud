@@ -302,6 +302,11 @@ pub struct ProjectDotfiles {
     /// Literal project-root CLAUDE.md content (NO ${VAR} rendering). Empty = none.
     #[serde(default)]
     pub claude_md: String,
+    /// settings.json fragment (deep-MERGED into <project>/.claude/settings.json;
+    /// supports ${VAR}). Empty = none. Arrays (permissions.allow/deny, hooks) are
+    /// WHOLE-ARRAY replace (project wins; detach restores prior array). No union.
+    #[serde(default)]
+    pub settings: String,
 }
 
 /// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b
@@ -367,6 +372,8 @@ pub struct ManifestEntry {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_keys: Option<String>,
     pub created_at: i64,
 }
 
@@ -1429,6 +1436,34 @@ mod project_struct_tests {
         );
         let back: super::ProjectSpec = serde_json::from_str(&json).expect("round-trip");
         assert_eq!(back.dotfiles.claude_md, "# Project memory\nbe terse");
+    }
+
+    #[test]
+    fn old_project_spec_json_without_settings_still_deserializes() {
+        // A v17/4b-1 spec blob has dotfiles.claudeMd but NO dotfiles.settings.
+        // #[serde(default)] must let it deserialize with an empty settings string.
+        let old = r##"{"content":{"skills":[],"commands":[],"agents":[],"mcp":[]},"vars":{},"dotfiles":{"claudeMd":"# m\n"}}"##;
+        let spec: super::ProjectSpec =
+            serde_json::from_str(old).expect("old spec must deserialize");
+        assert_eq!(spec.dotfiles.claude_md, "# m\n");
+        assert_eq!(
+            spec.dotfiles.settings, "",
+            "missing settings defaults to empty"
+        );
+    }
+
+    #[test]
+    fn project_dotfiles_settings_round_trips_camelcase() {
+        let mut spec = super::ProjectSpec::default();
+        spec.dotfiles.settings = r#"{"model":"x"}"#.to_string();
+        let json = serde_json::to_string(&spec).expect("serialize");
+        // wire key is `settings` (rename_all=camelCase leaves single-word keys unchanged).
+        assert!(
+            json.contains(r#""settings":"{\"model\":\"x\"}""#),
+            "got {json}"
+        );
+        let back: super::ProjectSpec = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back.dotfiles.settings, r#"{"model":"x"}"#);
     }
 }
 

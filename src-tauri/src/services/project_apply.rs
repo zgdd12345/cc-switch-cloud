@@ -98,6 +98,18 @@ impl ProjectApplyService {
                             AppError::Message(format!("project skill remove failed: {e}"))
                         })?;
                 }
+            } else if r.kind == "settings_merge" {
+                // CRITICAL (contract c): never let a merge row hit the else
+                // (remove_whole_file_if_owned → whole-file delete of the user's
+                // settings.json). This reverse IS the contract-(d) pre-reapply
+                // ordering: undo our prior merge BEFORE the materialize block (after
+                // the CLAUDE.md block, below) re-reads disk + re-merges, so our prior
+                // write never becomes the new "user baseline".
+                crate::services::settings_merge::reverse_merge(
+                    std::path::Path::new(&r.target_path),
+                    r.owned_keys.as_deref(),
+                    &mut result.warnings,
+                )?;
             } else {
                 crate::services::profile_render::remove_whole_file_if_owned(
                     &r.target_path,
@@ -132,7 +144,8 @@ impl ProjectApplyService {
                 &project.id,
                 &target,
                 "command",
-                &hash,
+                Some(&hash),
+                None,
             ))?;
         }
 
@@ -157,7 +170,8 @@ impl ProjectApplyService {
                 &project.id,
                 &target,
                 "agent",
-                &hash,
+                Some(&hash),
+                None,
             ))?;
         }
 
@@ -185,7 +199,8 @@ impl ProjectApplyService {
                     &project.id,
                     &dest,
                     "skill",
-                    &hash,
+                    Some(&hash),
+                    None,
                 ))?;
             }
         }
@@ -208,13 +223,107 @@ impl ProjectApplyService {
                     &project.id,
                     &target,
                     "project_memory",
-                    &hash,
+                    Some(&hash),
+                    None,
                 ))?;
             } else {
                 result.warnings.push(format!(
                     "skipped project CLAUDE.md (user-edited/unmanaged file present): {}",
                     target.display()
                 ));
+            }
+        }
+
+        // ---- project settings.json (deep MERGE, ${VAR}; 4b-2, Claude only) ----
+        // The pre-delete sweep already ran reverse_merge for our prior row
+        // (contract d), so the on-disk settings.json is the USER baseline here.
+        let settings_frag = &project.spec.dotfiles.settings;
+        if !settings_frag.is_empty() {
+            let target = base.settings_file();
+            let var_map = Self::build_project_var_map(&state.db, &app, &project)?;
+            let mut warns = Vec::new();
+            let rendered = crate::services::profile_vars::substitute_vars(
+                settings_frag,
+                &var_map,
+                /* json_escape = */ true,
+                &mut warns,
+            );
+            for w in warns {
+                result
+                    .warnings
+                    .push(format!("project settings.json render: {w}"));
+            }
+            match serde_json::from_str::<serde_json::Value>(&rendered) {
+                Ok(frag) if !frag.is_object() => {
+                    // settings.json must be a JSON object. A non-object root
+                    // (array/string/number/bool/null) is an authoring error:
+                    // refuse it (warn, no write, no row) instead of letting
+                    // merge_with_snapshot's root-overwrite arm clobber the
+                    // user's entire settings.json.
+                    let ty = match frag {
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "boolean",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::String(_) => "string",
+                        serde_json::Value::Array(_) => "array",
+                        serde_json::Value::Object(_) => "object",
+                    };
+                    result.warnings.push(format!(
+                        "project settings.json fragment must be a JSON object, got {ty}; skipping"
+                    ));
+                }
+                Ok(frag) => {
+                    // Load current disk as Option<Value> (None == skip-the-merge
+                    // sentinel; NOT Value::Null — a valid on-disk `null` must not be
+                    // misclassified, adversarial fix #3). absent file → Some({});
+                    // present+valid → Some(v); present+invalid → None + warn.
+                    let user_opt: Option<serde_json::Value> = if target.exists() {
+                        match std::fs::read(&target)
+                            .ok()
+                            .and_then(|b| serde_json::from_slice(&b).ok())
+                        {
+                            Some(v) => Some(v),
+                            None => {
+                                result.warnings.push(format!(
+                                    "project settings.json on disk is not a JSON value; skipping merge: {}",
+                                    target.display()
+                                ));
+                                None
+                            }
+                        }
+                    } else {
+                        Some(serde_json::Value::Object(serde_json::Map::new()))
+                    };
+                    if let Some(mut user) = user_opt {
+                        let mut owned = Vec::new();
+                        let mut path = Vec::new();
+                        crate::services::settings_merge::merge_with_snapshot(
+                            &mut user, &frag, &mut path, &mut owned,
+                        );
+                        let bytes = serde_json::to_vec_pretty(
+                            &crate::services::settings_merge::sort_json_keys_value(&user),
+                        )
+                        .map_err(|e| AppError::Message(format!("serialize settings.json: {e}")))?;
+                        atomic_write(&target, &bytes)?;
+                        let env = crate::services::settings_merge::OwnedKeysEnvelope {
+                            v: crate::services::settings_merge::OWNED_KEYS_VERSION,
+                            keys: owned,
+                        };
+                        let owned_json = serde_json::to_string(&env)
+                            .map_err(|e| AppError::Message(format!("serialize owned_keys: {e}")))?;
+                        state.db.record_manifest_entry(&Self::row(
+                            &channel,
+                            &project.id,
+                            &target,
+                            "settings_merge",
+                            None,
+                            Some(owned_json),
+                        ))?;
+                    }
+                }
+                Err(e) => result.warnings.push(format!(
+                    "project settings.json fragment invalid JSON after render, skipping: {e}"
+                )),
             }
         }
 
@@ -256,6 +365,15 @@ impl ProjectApplyService {
                             AppError::Message(format!("project skill remove failed: {e}"))
                         })?;
                 }
+            } else if r.kind == "settings_merge" {
+                // CRITICAL (contract c): a merge row MUST NOT hit the else
+                // (remove_whole_file_if_owned would attempt a whole-file delete of
+                // the user's settings.json). Reverse our recorded leaves instead.
+                crate::services::settings_merge::reverse_merge(
+                    std::path::Path::new(&r.target_path),
+                    r.owned_keys.as_deref(),
+                    &mut result.warnings,
+                )?;
             } else {
                 crate::services::profile_render::remove_whole_file_if_owned(
                     &r.target_path,
@@ -278,7 +396,8 @@ impl ProjectApplyService {
         project_id: &str,
         target: &Path,
         kind: &str,
-        content_hash: &str,
+        content_hash: Option<&str>,
+        owned_keys: Option<String>,
     ) -> ManifestEntry {
         ManifestEntry {
             id: 0,
@@ -288,7 +407,8 @@ impl ProjectApplyService {
             app_type: AppType::Claude.as_str().to_string(),
             target_path: target.to_string_lossy().to_string(),
             kind: kind.to_string(),
-            content_hash: Some(content_hash.to_string()),
+            content_hash: content_hash.map(|h| h.to_string()),
+            owned_keys,
             created_at: chrono::Utc::now().timestamp(),
         }
     }
@@ -314,6 +434,60 @@ impl ProjectApplyService {
             }
         }
         Ok(pruned)
+    }
+
+    /// Build the layered `${VAR}` map for a PROJECT (contract g). Layers low→high:
+    /// 1. allowlisted process env (profile_vars::ENV_ALLOWLIST_PREFIXES),
+    /// 2. active provider settings_config.env (get_effective_current_provider),
+    /// 3. project.spec.vars (TOP).
+    ///
+    /// Does NOT call profile_vars::build_var_map — that would inject the GLOBAL
+    /// active profile's vars, which must NOT leak into a project render.
+    /// reverse_merge does NOT re-render, so a value change between apply and
+    /// detach cannot defeat teardown (teardown is a pure fn of the stored snapshot).
+    pub fn build_project_var_map(
+        db: &crate::database::Database,
+        app_type: &AppType,
+        project: &crate::app_config::Project,
+    ) -> Result<crate::services::profile_vars::VarMap, AppError> {
+        use indexmap::IndexMap;
+        let mut map: IndexMap<String, String> = IndexMap::new();
+
+        // Layer 1: allowlisted process env.
+        for (k, v) in std::env::vars() {
+            if crate::services::profile_vars::ENV_ALLOWLIST_PREFIXES
+                .iter()
+                .any(|prefix| k.starts_with(prefix))
+            {
+                map.insert(k, v);
+            }
+        }
+
+        // Layer 2: active provider env (if any).
+        if let Some(provider_id) = crate::settings::get_effective_current_provider(db, app_type)? {
+            if let Some(provider) = db.get_provider_by_id(&provider_id, app_type.as_str())? {
+                if let Some(env_obj) = provider
+                    .settings_config
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                {
+                    for (k, v) in env_obj {
+                        if let Some(value) = crate::services::profile_vars::coerce_value(v) {
+                            map.insert(k.clone(), value);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Layer 3: project spec.vars (highest precedence).
+        for (k, v) in &project.spec.vars {
+            if let Some(value) = crate::services::profile_vars::coerce_value(v) {
+                map.insert(k.clone(), value);
+            }
+        }
+
+        Ok(crate::services::profile_vars::VarMap::from_index_map(map))
     }
 }
 
@@ -690,6 +864,7 @@ mod tests {
             content_hash: Some(crate::services::profile_render::content_hash(
                 b"FOREIGN USER DATA",
             )),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();
@@ -727,6 +902,7 @@ mod tests {
             target_path: "/no/such/path/xyz/.claude/commands/a.md".into(),
             kind: "command".into(),
             content_hash: Some("h".into()),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();
@@ -764,6 +940,7 @@ mod tests {
             target_path: "/no/such/gone/repo/.claude/commands/old.md".into(),
             kind: "command".into(),
             content_hash: Some("h".into()),
+            owned_keys: None,
             created_at: 0,
         })
         .unwrap();
@@ -999,6 +1176,451 @@ mod tests {
             std::fs::read_to_string(&root_file).unwrap(),
             "# USER EDITED\n",
             "user-edited CLAUDE.md must NOT be deleted on detach"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn build_project_var_map_precedence_spec_over_provider_over_process() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        std::env::set_var("ANTHROPIC_SHARED", "from_process");
+        std::env::set_var("AGENTHUB_ONLY_PROCESS", "process_only");
+        std::env::set_var("RANDOM_HOST_SECRET", "leak");
+
+        let db = Arc::new(Database::memory().expect("db"));
+        let app = AppType::Claude;
+
+        let provider = crate::provider::Provider::with_id(
+            "prov1".to_string(),
+            "Prov 1".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_SHARED": "from_provider",
+                    "ANTHROPIC_PROVIDER_KEY": "pk"
+                }
+            }),
+            None,
+        );
+        db.save_provider(app.as_str(), &provider)
+            .expect("save provider");
+        db.set_current_provider(app.as_str(), "prov1")
+            .expect("set current");
+
+        let (mut proj, _canon) = project_at(home.home(), "varproj", ProfileContent::default());
+        proj.spec.vars.insert(
+            "ANTHROPIC_SHARED".to_string(),
+            serde_json::Value::String("from_project".to_string()),
+        );
+        db.save_project(&proj).expect("save");
+
+        let app_arc = AppType::Claude;
+        let stored = db.get_project(&proj.id).unwrap().unwrap();
+        let map =
+            ProjectApplyService::build_project_var_map(&db, &app_arc, &stored).expect("build map");
+
+        assert_eq!(
+            map.get("ANTHROPIC_SHARED"),
+            Some("from_project"),
+            "project.spec.vars wins"
+        );
+        assert_eq!(
+            map.get("ANTHROPIC_PROVIDER_KEY"),
+            Some("pk"),
+            "provider env contributes"
+        );
+        assert_eq!(
+            map.get("AGENTHUB_ONLY_PROCESS"),
+            Some("process_only"),
+            "allowlisted process env"
+        );
+        assert_eq!(
+            map.get("RANDOM_HOST_SECRET"),
+            None,
+            "non-allowlisted env filtered"
+        );
+
+        std::env::remove_var("ANTHROPIC_SHARED");
+        std::env::remove_var("AGENTHUB_ONLY_PROCESS");
+        std::env::remove_var("RANDOM_HOST_SECRET");
+    }
+
+    #[test]
+    #[serial]
+    fn build_project_var_map_does_not_leak_global_profile_vars() {
+        // The global ACTIVE profile may carry spec.vars; build_project_var_map MUST
+        // NOT include them (it never calls build_var_map). Only the PROJECT's own
+        // spec.vars (+ provider env + allowlisted process env) feed the map.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let app = AppType::Claude;
+
+        // an active profile with a var that MUST NOT leak.
+        let mut pvars = serde_json::Map::new();
+        pvars.insert(
+            "ANTHROPIC_PROFILE_ONLY".to_string(),
+            serde_json::Value::String("LEAKED".to_string()),
+        );
+        let profile = crate::app_config::Profile {
+            id: "local:claude:Active".into(),
+            app_type: "claude".into(),
+            name: "Active".into(),
+            description: None,
+            is_active: true,
+            current_provider_id: None,
+            spec: crate::app_config::ProfileSpec {
+                content: Default::default(),
+                vars: pvars,
+            },
+            sort_index: 0,
+            created_at: 0,
+        };
+        db.save_profile(&profile).expect("save profile");
+
+        let (proj, _canon) = project_at(home.home(), "noleakproj", ProfileContent::default());
+        db.save_project(&proj).expect("save");
+        let stored = db.get_project(&proj.id).unwrap().unwrap();
+        let map = ProjectApplyService::build_project_var_map(&db, &app, &stored).expect("map");
+        assert_eq!(
+            map.get("ANTHROPIC_PROFILE_ONLY"),
+            None,
+            "global profile vars must NOT leak"
+        );
+    }
+
+    fn merge_proj(home: &Path, sub: &str, frag: &str) -> (Project, std::path::PathBuf) {
+        let (mut proj, canon) = project_at(home, sub, ProfileContent::default());
+        proj.spec.dotfiles.settings = frag.into();
+        (proj, canon)
+    }
+
+    #[test]
+    #[serial]
+    fn apply_merges_settings_and_preserves_unrelated_user_keys() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = merge_proj(home.home(), "merge-a", r#"{"model": "claude-x"}"#);
+        db.save_project(&proj).expect("save");
+
+        // user already has a settings.json with their OWN key.
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"userKept": true}"#).unwrap();
+
+        let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        assert!(res.warnings.is_empty(), "no warnings: {:?}", res.warnings);
+
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(disk["model"], serde_json::json!("claude-x"), "frag merged");
+        assert_eq!(
+            disk["userKept"],
+            serde_json::json!(true),
+            "user key survives"
+        );
+
+        // exactly one settings_merge row with a parseable v1 envelope, content_hash None.
+        let chan = format!("project:{}", canon.to_string_lossy());
+        let rows = db.get_manifest_for_channel(&chan).unwrap();
+        let m: Vec<_> = rows.iter().filter(|r| r.kind == "settings_merge").collect();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].content_hash, None, "merge rows carry NO content_hash");
+        let env: crate::services::settings_merge::OwnedKeysEnvelope =
+            serde_json::from_str(m[0].owned_keys.as_deref().expect("owned_keys"))
+                .expect("parse env");
+        assert_eq!(env.v, crate::services::settings_merge::OWNED_KEYS_VERSION);
+        assert!(env.keys.iter().any(|k| k.path == vec!["model".to_string()]));
+    }
+
+    #[test]
+    #[serial]
+    fn apply_bad_fragment_warns_and_writes_no_file_no_row() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        // fragment is not valid JSON even after render → warn, no write, no row.
+        let (proj, canon) = merge_proj(home.home(), "merge-bad", r#"{ not: json"#);
+        db.save_project(&proj).expect("save");
+        let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        assert!(res
+            .warnings
+            .iter()
+            .any(|w| w.contains("invalid JSON after render")));
+        assert!(
+            !canon.join(".claude").join("settings.json").exists(),
+            "no file written"
+        );
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert!(
+            !db.get_manifest_for_channel(&chan)
+                .unwrap()
+                .iter()
+                .any(|r| r.kind == "settings_merge"),
+            "no settings_merge row for a bad fragment"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_malformed_disk_skips_merge_byte_identical_no_row() {
+        // M11: disk settings.json is invalid JSON → skip the merge, leave bytes
+        // identical, warn, NO row.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = merge_proj(home.home(), "merge-mal", r#"{"model": "x"}"#);
+        db.save_project(&proj).expect("save");
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"{ broken : json").unwrap();
+
+        let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        assert!(res.warnings.iter().any(|w| w.contains("not a JSON value")));
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"{ broken : json",
+            "byte-identical"
+        );
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert!(
+            !db.get_manifest_for_channel(&chan)
+                .unwrap()
+                .iter()
+                .any(|r| r.kind == "settings_merge"),
+            "no row when disk skip"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_non_object_fragment_warns_and_writes_no_file_no_row() {
+        // A fragment whose ROOT is a non-object (array, string, ...) must be
+        // REFUSED: warn, do NOT clobber the user's settings.json, NO row.
+        for frag in [r#"[1,2,3]"#, r#""x""#] {
+            let home = TempHome::new();
+            crate::settings::reload_settings().ok();
+            let db = Arc::new(Database::memory().expect("db"));
+            let state = AppState::new(db.clone());
+            let (proj, canon) = merge_proj(home.home(), "merge-nonobj", frag);
+            db.save_project(&proj).expect("save");
+
+            // user already has a settings.json that must survive untouched.
+            let target = canon.join(".claude").join("settings.json");
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            let original = br#"{"userKept": true}"#;
+            std::fs::write(&target, original).unwrap();
+
+            let res = ProjectApplyService::apply(&state, &proj.id).expect("apply");
+            assert!(
+                res.warnings
+                    .iter()
+                    .any(|w| w.contains("must be a JSON object")),
+                "warns about non-object root for frag {frag:?}: {:?}",
+                res.warnings
+            );
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                original,
+                "user settings.json is byte-identical (not clobbered) for frag {frag:?}"
+            );
+            let chan = format!("project:{}", canon.to_string_lossy());
+            assert!(
+                !db.get_manifest_for_channel(&chan)
+                    .unwrap()
+                    .iter()
+                    .any(|r| r.kind == "settings_merge"),
+                "no settings_merge row for a non-object fragment {frag:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn apply_renders_vars_in_settings_fragment() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) =
+            merge_proj(home.home(), "merge-var", r#"{"model": "${MODEL_NAME}"}"#);
+        proj.spec.vars.insert(
+            "MODEL_NAME".to_string(),
+            serde_json::Value::String("claude-from-var".to_string()),
+        );
+        db.save_project(&proj).expect("save");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        let target = canon.join(".claude").join("settings.json");
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk["model"],
+            serde_json::json!("claude-from-var"),
+            "${{VAR}} rendered"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn reapply_settings_is_idempotent_and_prior_is_true_user_baseline() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        // frag overwrites a key the USER already has → prior must be the user's value.
+        let (proj, canon) = merge_proj(home.home(), "merge-reapply", r#"{"model": "ours"}"#);
+        db.save_project(&proj).expect("save");
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"model": "USER_ORIGINAL"}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 1");
+        ProjectApplyService::apply(&state, &proj.id).expect("apply 2");
+
+        // exactly ONE settings_merge row (pre-delete reverse_merge ran first, then
+        // re-merge recorded a fresh single row).
+        let chan = format!("project:{}", canon.to_string_lossy());
+        let rows = db.get_manifest_for_channel(&chan).unwrap();
+        let m: Vec<_> = rows.iter().filter(|r| r.kind == "settings_merge").collect();
+        assert_eq!(
+            m.len(),
+            1,
+            "double-apply stays idempotent (one settings_merge row)"
+        );
+
+        // the recorded prior for [model] must be the TRUE user original — the
+        // pre-delete reverse restored "USER_ORIGINAL" before the re-merge snapshotted.
+        let env: crate::services::settings_merge::OwnedKeysEnvelope =
+            serde_json::from_str(m[0].owned_keys.as_deref().unwrap()).unwrap();
+        let model_leaf = env
+            .keys
+            .iter()
+            .find(|k| k.path == vec!["model".to_string()])
+            .expect("model leaf");
+        assert!(model_leaf.prior.present);
+        assert_eq!(
+            model_leaf.prior.value,
+            Some(serde_json::json!("USER_ORIGINAL")),
+            "prior must be the TRUE user baseline, NOT our prior write (contract d)"
+        );
+
+        // disk reflects our value after re-apply.
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(disk["model"], serde_json::json!("ours"));
+    }
+
+    #[test]
+    #[serial]
+    fn m10_settings_file_is_never_whole_deleted_on_reapply_or_detach() {
+        // M10 (CRITICAL): a bound project with a settings fragment + CLAUDE.md.
+        // After apply: a settings_merge row exists. (a) re-apply: settings.json
+        // STILL EXISTS with the user key. (b) detach: settings.json STILL EXISTS
+        // (user keys reversed) — the merge row must NOT fall through the else and
+        // get whole-file deleted.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (mut proj, canon) = merge_proj(home.home(), "m10", r#"{"model": "ours"}"#);
+        proj.spec.dotfiles.claude_md = "# mem\n".into();
+        db.save_project(&proj).expect("save");
+
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"userKept": true}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert!(
+            db.get_manifest_for_channel(&chan)
+                .unwrap()
+                .iter()
+                .any(|r| r.kind == "settings_merge"),
+            "a settings_merge row must exist after apply"
+        );
+
+        // (a) re-apply: file STILL exists with the user key.
+        ProjectApplyService::apply(&state, &proj.id).expect("re-apply");
+        assert!(
+            target.exists(),
+            "settings.json must NOT be whole-deleted by re-apply"
+        );
+        let disk_a: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk_a["userKept"],
+            serde_json::json!(true),
+            "user key survives re-apply"
+        );
+
+        // (b) detach: file STILL exists; our [model] leaf reversed; user key intact.
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(
+            target.exists(),
+            "settings.json must STILL EXIST after detach (M10)"
+        );
+        let disk_b: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk_b["userKept"],
+            serde_json::json!(true),
+            "user key survives detach"
+        );
+        assert!(
+            disk_b.get("model").is_none(),
+            "our inserted leaf removed on detach (M7)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_restores_overwritten_user_key_and_keeps_new_user_key() {
+        // M7 + M9: frag overwrote user's existing [model]; user later added a brand
+        // new key never in the frag. Detach restores [model] to the user original
+        // and leaves the brand-new key untouched.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = merge_proj(home.home(), "m7m9", r#"{"model": "ours"}"#);
+        db.save_project(&proj).expect("save");
+        let target = canon.join(".claude").join("settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, r#"{"model": "USER_ORIGINAL"}"#).unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+
+        // user adds a brand-new key that was NEVER in our fragment (M9).
+        let mut cur: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        cur["userBrandNew"] = serde_json::json!("added later");
+        std::fs::write(&target, serde_json::to_vec_pretty(&cur).unwrap()).unwrap();
+
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            disk["model"],
+            serde_json::json!("USER_ORIGINAL"),
+            "overwritten user key restored (M7)"
+        );
+        assert_eq!(
+            disk["userBrandNew"],
+            serde_json::json!("added later"),
+            "brand-new user key survives (M9)"
+        );
+
+        // rows cleared.
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert_eq!(
+            db.get_manifest_for_channel(&chan).unwrap().len(),
+            0,
+            "rows cleared on detach"
         );
     }
 }

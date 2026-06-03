@@ -51,6 +51,14 @@ impl VarMap {
     pub fn get(&self, k: &str) -> Option<&str> {
         self.0.get(k).map(|s| s.as_str())
     }
+
+    /// Build a `VarMap` directly from an ordered index map (the inner field is
+    /// private; `build_project_var_map` (T7) constructs the layers itself and
+    /// hands the finished map in here).
+    #[allow(dead_code)]
+    pub(crate) fn from_index_map(map: IndexMap<String, String>) -> VarMap {
+        VarMap(map)
+    }
 }
 
 /// Coerce a JSON value into a flat string for use as a variable value.
@@ -58,7 +66,7 @@ impl VarMap {
 /// - `String` is used as-is.
 /// - `Number` / `Bool` use their `to_string()`.
 /// - Anything else (null, array, object) is skipped (`None`).
-fn coerce_value(v: &Value) -> Option<String> {
+pub(crate) fn coerce_value(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => Some(s.clone()),
         Value::Number(n) => Some(n.to_string()),
@@ -602,5 +610,28 @@ mod tests {
         assert!(w.is_empty());
 
         std::env::remove_var("ANTHROPIC_MODEL");
+    }
+
+    #[test]
+    fn varmap_from_index_map_preserves_entries() {
+        let mut m: IndexMap<String, String> = IndexMap::new();
+        m.insert("A".to_string(), "1".to_string());
+        m.insert("B".to_string(), "two".to_string());
+        let vm = VarMap::from_index_map(m);
+        assert_eq!(vm.get("A"), Some("1"));
+        assert_eq!(vm.get("B"), Some("two"));
+        assert_eq!(vm.get("MISSING"), None);
+    }
+
+    #[test]
+    fn coerce_value_is_callable_from_module() {
+        // coerce_value is pub(crate) so build_project_var_map (T7) can reuse it.
+        assert_eq!(coerce_value(&serde_json::json!("s")), Some("s".to_string()));
+        assert_eq!(coerce_value(&serde_json::json!(7)), Some("7".to_string()));
+        assert_eq!(
+            coerce_value(&serde_json::json!(true)),
+            Some("true".to_string())
+        );
+        assert_eq!(coerce_value(&serde_json::json!({"k": 1})), None);
     }
 }

@@ -59,6 +59,7 @@ pub use services::{
     command::CommandService,
     project_apply::ProjectApplyService,
     project_paths::ProjectBase,
+    settings_merge::OwnedKeysEnvelope,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,

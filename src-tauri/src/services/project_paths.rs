@@ -48,6 +48,14 @@ impl ProjectBase {
         self.root.join(app.project_memory_filename())
     }
 
+    /// Project settings file for Claude (4b-2: <root>/.claude/settings.json).
+    /// UNDER dotdir() — Claude Code reads project-local settings.json (merged
+    /// with ~/.claude/settings.json by Claude itself). NOT app-parameterized in
+    /// v1: settings.json is a Claude-only kind (`.mcp.json` lands in 4b-3).
+    pub fn settings_file(&self) -> PathBuf {
+        self.dotdir().join("settings.json")
+    }
+
     /// Resolve + validate a user-entered project root for `app`.
     ///
     /// Returns Err (refusing all writes) when the canonical root equals,
@@ -394,6 +402,22 @@ mod tests {
             base.memory_file(&AppType::Claude),
             base.dotdir().join("CLAUDE.md"),
             "memory_file must use root(), not dotdir()"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn settings_file_is_under_dotdir() {
+        let home = TempHome::new();
+        let proj = home.home().join("work").join("setrepo");
+        std::fs::create_dir_all(&proj).expect("mkdir proj");
+        let base = ProjectBase::resolve(proj.to_str().unwrap(), &AppType::Claude).expect("resolve");
+        // settings.json lives UNDER .claude/, unlike CLAUDE.md (root-level).
+        assert_eq!(base.settings_file(), base.dotdir().join("settings.json"));
+        assert_ne!(
+            base.settings_file(),
+            base.root().join("settings.json"),
+            "settings_file must use dotdir(), not root()"
         );
     }
 }

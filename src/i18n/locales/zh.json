@@ -2808,6 +2808,9 @@
     "claudeMd": "项目 CLAUDE.md（叠加记忆）",
     "claudeMdPlaceholder": "# 项目规则\n纯文本字面量——不做 ${VAR} 渲染。",
     "claudeMdHint": "写入 <项目>/CLAUDE.md（项目根目录）。Claude Code 会与全局 ~/.claude/CLAUDE.md 叠加读取——是补充而非替换。",
+    "settings": "项目 settings.json（深度合并）",
+    "settingsPlaceholder": "{\n  \"model\": \"${ANTHROPIC_MODEL}\"\n}",
+    "settingsHint": "深度合并到 <项目>/.claude/settings.json。支持 ${VAR} 变量替换。数组字段（permissions.allow/deny、hooks）整体替换——项目值优先；解绑后恢复之前的数组。不做元素合并。",
     "appliedFiles": "已应用文件",
     "cancel": "取消",
     "save": "保存"

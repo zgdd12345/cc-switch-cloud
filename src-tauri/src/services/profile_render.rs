@@ -149,6 +149,7 @@ pub fn render_whole_file(
         target_path: path.to_string_lossy().to_string(),
         kind: "whole_file".to_string(),
         content_hash: Some(new_hash),
+        owned_keys: None,
         created_at: 0,
     }))
 }
