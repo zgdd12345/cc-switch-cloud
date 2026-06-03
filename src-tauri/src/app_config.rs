@@ -516,6 +516,28 @@ impl AppType {
         }
     }
 
+    /// Per-app project dotdir name (4a uses Claude only; others defined for 4c).
+    pub fn project_dotdir(&self) -> &str {
+        match self {
+            AppType::Claude | AppType::ClaudeDesktop => ".claude",
+            AppType::Codex => ".codex",
+            AppType::Gemini => ".gemini",
+            AppType::OpenCode => ".opencode",
+            AppType::OpenClaw => ".openclaw",
+            AppType::Hermes => ".hermes",
+        }
+    }
+
+    /// Per-app project memory filename (reserved for 4b project dotfiles).
+    pub fn project_memory_filename(&self) -> &str {
+        match self {
+            AppType::Claude | AppType::ClaudeDesktop => "CLAUDE.md",
+            AppType::Codex | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
+            AppType::Gemini => "GEMINI.md",
+            AppType::Hermes => "HERMES.md",
+        }
+    }
+
     /// Check if this app uses additive mode
     ///
     /// - Switch mode (false): Only the current provider is written to live config (Claude, Codex, Gemini)
@@ -1362,5 +1384,21 @@ mod project_struct_tests {
         assert_eq!(back.id, "proj:1");
         assert!(back.enabled);
         assert!(back.spec.content.skills.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod app_type_project_dirs {
+    use super::AppType;
+    #[test]
+    fn project_dotdir_and_memory_filename_per_app() {
+        assert_eq!(AppType::Claude.project_dotdir(), ".claude");
+        assert_eq!(AppType::Codex.project_dotdir(), ".codex");
+        assert_eq!(AppType::OpenCode.project_dotdir(), ".opencode");
+        assert_eq!(AppType::Gemini.project_dotdir(), ".gemini");
+        assert_eq!(AppType::Claude.project_memory_filename(), "CLAUDE.md");
+        assert_eq!(AppType::Codex.project_memory_filename(), "AGENTS.md");
+        assert_eq!(AppType::OpenCode.project_memory_filename(), "AGENTS.md");
+        assert_eq!(AppType::Gemini.project_memory_filename(), "GEMINI.md");
     }
 }
