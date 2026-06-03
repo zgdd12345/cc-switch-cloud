@@ -302,6 +302,11 @@ pub struct ProjectDotfiles {
     /// Literal project-root CLAUDE.md content (NO ${VAR} rendering). Empty = none.
     #[serde(default)]
     pub claude_md: String,
+    /// settings.json fragment (deep-MERGED into <project>/.claude/settings.json;
+    /// supports ${VAR}). Empty = none. Arrays (permissions.allow/deny, hooks) are
+    /// WHOLE-ARRAY replace (project wins; detach restores prior array). No union.
+    #[serde(default)]
+    pub settings: String,
 }
 
 /// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b

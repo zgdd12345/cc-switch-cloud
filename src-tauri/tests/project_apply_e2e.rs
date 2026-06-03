@@ -80,6 +80,7 @@ fn project_apply_detach_lifecycle() {
             vars: serde_json::Map::new(),
             dotfiles: agenthub_lib::ProjectDotfiles {
                 claude_md: "# e2e project memory\n".into(),
+                settings: String::new(),
             },
         },
         enabled: true,
