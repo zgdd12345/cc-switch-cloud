@@ -1056,7 +1056,7 @@ fn schema_migration_v16_to_v17_reaches_current() {
         Database::get_user_version(&conn).expect("version"),
         SCHEMA_VERSION
     );
-    assert_eq!(SCHEMA_VERSION, 17, "SCHEMA_VERSION must be bumped to 17");
+    const { assert!(SCHEMA_VERSION >= 17, "SCHEMA_VERSION must be at least 17") };
     let n: i64 = conn
         .query_row(
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='projects'",
@@ -1069,4 +1069,55 @@ fn schema_migration_v16_to_v17_reaches_current() {
         Database::has_column(&conn, "apply_manifest", "project_id").expect("has_column"),
         "apply_manifest.project_id must exist after migration"
     );
+}
+
+#[test]
+fn schema_v18_base_create_has_apply_manifest_owned_keys() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    assert!(
+        Database::has_column(&conn, "apply_manifest", "owned_keys").expect("has_column"),
+        "apply_manifest.owned_keys must exist in base create_tables (v18)"
+    );
+}
+
+#[test]
+fn schema_migration_v17_to_v18_adds_owned_keys() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    // Hand-build a v17 apply_manifest WITHOUT owned_keys, then stamp user_version=17.
+    conn.execute("DROP TABLE apply_manifest", []).expect("drop");
+    conn.execute(
+        "CREATE TABLE apply_manifest (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel TEXT NOT NULL DEFAULT 'global',
+            profile_id TEXT,
+            app_type TEXT NOT NULL,
+            target_path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            project_id TEXT
+        )",
+        [],
+    )
+    .expect("create v17 apply_manifest");
+    assert!(
+        !Database::has_column(&conn, "apply_manifest", "owned_keys").expect("has_column"),
+        "precondition: v17 table has no owned_keys"
+    );
+    Database::set_user_version(&conn, 17).expect("seed v17");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migration");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version"),
+        SCHEMA_VERSION
+    );
+    assert_eq!(SCHEMA_VERSION, 18, "SCHEMA_VERSION must be bumped to 18");
+    assert!(
+        Database::has_column(&conn, "apply_manifest", "owned_keys").expect("has_column"),
+        "apply_manifest.owned_keys must exist after v17 -> v18 migration"
+    );
+    // idempotent re-run: migrating an already-current DB is a no-op.
+    Database::apply_schema_migrations_on_conn(&conn).expect("re-run migration");
+    assert_eq!(Database::get_user_version(&conn).expect("version"), 18);
 }

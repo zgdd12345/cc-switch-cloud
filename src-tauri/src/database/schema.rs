@@ -179,6 +179,7 @@ impl Database {
         created_at   INTEGER NOT NULL DEFAULT 0,
         content_hash TEXT,
         project_id   TEXT,
+        owned_keys   TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
     )",
             [],
@@ -567,6 +568,11 @@ impl Database {
                         );
                         Self::migrate_v16_to_v17(conn)?;
                         Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("migrating db v17 -> v18 (apply_manifest.owned_keys)");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1492,6 +1498,17 @@ impl Database {
             Self::add_column_if_missing(conn, "apply_manifest", "project_id", "TEXT")?;
         }
         log::info!("v16 -> v17 migration done: projects table + apply_manifest.project_id");
+        Ok(())
+    }
+
+    /// v17 -> v18 迁移：为 apply_manifest 新增 owned_keys TEXT 列（4b-2 项目 settings.json
+    /// 合并的 per-leaf 快照信封）。与 base CREATE 收敛（IF NOT EXISTS + add_column_if_missing）。
+    /// 仅用于 apply 清单；projects.spec 内的 dotfiles.settings 是纯 serde，不涉及 schema。
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "apply_manifest")? {
+            Self::add_column_if_missing(conn, "apply_manifest", "owned_keys", "TEXT")?;
+        }
+        log::info!("v17 -> v18 migration done: apply_manifest.owned_keys");
         Ok(())
     }
 
