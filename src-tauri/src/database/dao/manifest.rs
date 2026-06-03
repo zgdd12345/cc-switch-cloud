@@ -127,6 +127,67 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    /// 获取某 channel 的全部 manifest 记录（项目通道 = "project:<canonpath>"）。
+    /// 与 get_manifest_for_profile 不同：仅按 channel 过滤，确保全局与项目互不串扰。
+    pub fn get_manifest_for_channel(&self, channel: &str) -> Result<Vec<ManifestEntry>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, channel, profile_id, project_id, app_type, target_path, kind, content_hash, created_at
+                 FROM apply_manifest
+                 WHERE channel = ?1
+                 ORDER BY id ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([channel], |row| {
+                Ok(ManifestEntry {
+                    id: row.get(0)?,
+                    channel: row.get(1)?,
+                    profile_id: row.get(2)?,
+                    project_id: row.get(3)?,
+                    app_type: row.get(4)?,
+                    target_path: row.get(5)?,
+                    kind: row.get(6)?,
+                    content_hash: row.get(7)?,
+                    created_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// 清除某 channel 的全部 manifest 记录（仅该 channel；全局 / 其它项目不受影响）。
+    pub fn clear_manifest_for_channel(&self, channel: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "DELETE FROM apply_manifest WHERE channel = ?1",
+            params![channel],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 列出所有项目通道（channel LIKE 'project:%'）的去重列表，供路径失效清理使用。
+    pub fn get_all_project_channels(&self) -> Result<Vec<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT channel FROM apply_manifest WHERE channel LIKE 'project:%'")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +259,71 @@ mod tests {
         db.clear_manifest_for_profile(p, "claude")?;
         assert_eq!(db.get_manifest_for_profile(p, "claude")?.len(), 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_channel_scoped_queries() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // project_id has NO FK (Task 1 design decision) — no projects row needed.
+        let chan = "project:/abs/repo";
+
+        // one global row + two project rows on the same channel
+        let g = ManifestEntry {
+            id: 0,
+            channel: "global".into(),
+            profile_id: None,
+            project_id: None,
+            app_type: "claude".into(),
+            target_path: "/g".into(),
+            kind: "command".into(),
+            content_hash: None,
+            created_at: 0,
+        };
+        db.record_manifest_entry(&g)?;
+        for tp in [
+            "/abs/repo/.claude/commands/a.md",
+            "/abs/repo/.claude/agents/b.md",
+        ] {
+            db.record_manifest_entry(&ManifestEntry {
+                id: 0,
+                channel: chan.into(),
+                profile_id: None,
+                project_id: Some("proj:c".into()),
+                app_type: "claude".into(),
+                target_path: tp.into(),
+                kind: "command".into(),
+                content_hash: Some("h".into()),
+                created_at: 0,
+            })?;
+        }
+
+        let chan_rows = db.get_manifest_for_channel(chan)?;
+        assert_eq!(chan_rows.len(), 2, "only the 2 project-channel rows");
+        assert!(chan_rows.iter().all(|r| r.channel == chan));
+        assert!(chan_rows
+            .iter()
+            .all(|r| r.project_id.as_deref() == Some("proj:c")));
+
+        let channels = db.get_all_project_channels()?;
+        assert!(channels.contains(&chan.to_string()));
+        assert!(
+            !channels.contains(&"global".to_string()),
+            "global is not a project channel"
+        );
+
+        db.clear_manifest_for_channel(chan)?;
+        assert_eq!(db.get_manifest_for_channel(chan)?.len(), 0);
+        // global row untouched
+        let conn = crate::database::lock_conn!(db.conn);
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM apply_manifest WHERE channel='global'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count global");
+        assert_eq!(n, 1, "global rows must survive channel clear");
         Ok(())
     }
 
