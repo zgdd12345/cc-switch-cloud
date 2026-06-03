@@ -9,8 +9,8 @@ use std::sync::Arc;
 // Project/ProjectSpec/ProfileContent/InstalledCommand/ProjectApplyService/ProjectBase
 // re-exports; Database + AppState + AppType were already re-exported.
 use agenthub_lib::{
-    AppState, AppType, Database, InstalledCommand, ProfileContent, Project, ProjectApplyService,
-    ProjectBase, ProjectSpec,
+    AppState, AppType, Database, InstalledCommand, OwnedKeysEnvelope, ProfileContent, Project,
+    ProjectApplyService, ProjectBase, ProjectSpec,
 };
 use serial_test::serial;
 use tempfile::TempDir;
@@ -120,4 +120,91 @@ fn project_apply_detach_lifecycle() {
     );
     ProjectApplyService::detach(&state, "proj:e2e").unwrap();
     assert!(!claude_md.exists(), "owned CLAUDE.md removed on detach");
+}
+
+#[test]
+#[serial]
+fn e2e_settings_merge_apply_then_detach_preserves_user_keys() {
+    let home = TempHome::new();
+    let db = Arc::new(Database::memory().expect("db"));
+    let state = AppState::new(db.clone());
+
+    // a project bound with a settings fragment that uses ${VAR} + a user file on disk.
+    let root = home.dir.path().join("e2e-set");
+    std::fs::create_dir_all(&root).unwrap();
+    let canon = root.canonicalize().unwrap();
+    let target = canon.join(".claude").join("settings.json");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(&target, r#"{"userKept": 7, "model": "USER_ORIGINAL"}"#).unwrap();
+
+    let mut spec = ProjectSpec::default();
+    spec.dotfiles.settings =
+        r#"{"model": "${MODEL_NAME}", "permissions": {"defaultMode": "ask"}}"#.into();
+    spec.vars.insert(
+        "MODEL_NAME".into(),
+        serde_json::Value::String("claude-e2e".into()),
+    );
+    let proj = Project {
+        id: "proj:e2e-set".into(),
+        project_path: canon.to_string_lossy().to_string(),
+        entered_path: root.to_string_lossy().to_string(),
+        app_type: "claude".into(),
+        name: Some("e2e".into()),
+        spec,
+        enabled: true,
+        created_at: 1,
+        updated_at: 1,
+    };
+    db.save_project(&proj).unwrap();
+
+    // apply: ${VAR} rendered, frag merged, user keys preserved, one envelope row.
+    ProjectApplyService::apply(&state, &proj.id).expect("apply");
+    let merged: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+    assert_eq!(merged["userKept"], serde_json::json!(7));
+    assert_eq!(merged["model"], serde_json::json!("claude-e2e"));
+    assert_eq!(
+        merged["permissions"]["defaultMode"],
+        serde_json::json!("ask")
+    );
+
+    let chan = format!("project:{}", canon.to_string_lossy());
+    let rows = db.get_manifest_for_channel(&chan).unwrap();
+    let env: OwnedKeysEnvelope = serde_json::from_str(
+        rows.iter()
+            .find(|r| r.kind == "settings_merge")
+            .unwrap()
+            .owned_keys
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(env.v, 1);
+
+    // detach: user keys survive; our leaves reversed ([model] restored, defaultMode removed).
+    ProjectApplyService::detach(&state, &proj.id).expect("detach");
+    assert!(target.exists(), "settings.json survives detach");
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+    assert_eq!(
+        after["userKept"],
+        serde_json::json!(7),
+        "unrelated user key survives"
+    );
+    assert_eq!(
+        after["model"],
+        serde_json::json!("USER_ORIGINAL"),
+        "overwritten user key restored"
+    );
+    assert!(
+        after
+            .get("permissions")
+            .is_none_or(|p| p.get("defaultMode").is_none()),
+        "our inserted defaultMode leaf removed"
+    );
+    assert_eq!(
+        db.get_manifest_for_channel(&chan).unwrap().len(),
+        0,
+        "rows cleared"
+    );
 }
