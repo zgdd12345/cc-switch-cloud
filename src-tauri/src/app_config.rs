@@ -290,6 +290,39 @@ pub struct Profile {
     pub created_at: i64,
 }
 
+/// Project spec: own content set (same JSON shape as ProfileSpec) + reserved vars for 4b.
+#[allow(dead_code)] // wired in Task 3 DAO
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectSpec {
+    #[serde(default)]
+    pub content: ProfileContent, // REUSE existing struct (skills/commands/agents/mcp)
+    #[serde(default)]
+    pub vars: serde_json::Map<String, serde_json::Value>, // reserved for 4b dotfiles/${VAR}
+}
+
+/// A device-local binding of a real project directory to an own content set.
+#[allow(dead_code)] // wired in Task 3 DAO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    /// Canonical absolute directory path — identity + manifest channel key.
+    pub project_path: String,
+    /// User-entered path — display only.
+    pub entered_path: String,
+    pub app_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub spec: ProjectSpec,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
 /// A single dotfile stored for a profile (profile_dotfiles table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1294,5 +1327,37 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+    }
+}
+
+#[cfg(test)]
+mod project_struct_tests {
+    use super::{Project, ProjectSpec};
+
+    #[test]
+    fn project_spec_serde_camelcase_roundtrip() {
+        let p = Project {
+            id: "proj:1".into(),
+            project_path: "/abs/canon/repo".into(),
+            entered_path: "~/repo".into(),
+            app_type: "claude".into(),
+            name: Some("Repo".into()),
+            spec: ProjectSpec::default(),
+            enabled: true,
+            created_at: 10,
+            updated_at: 20,
+        };
+        let json = serde_json::to_string(&p).expect("serialize");
+        // camelCase keys for the cross-FFI fields
+        assert!(
+            json.contains("\"projectPath\":\"/abs/canon/repo\""),
+            "json={json}"
+        );
+        assert!(json.contains("\"enteredPath\":\"~/repo\""), "json={json}");
+        assert!(json.contains("\"appType\":\"claude\""), "json={json}");
+        let back: Project = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id, "proj:1");
+        assert!(back.enabled);
+        assert!(back.spec.content.skills.is_empty());
     }
 }
