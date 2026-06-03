@@ -4,6 +4,8 @@ import type { ManifestEntry } from "./profiles";
 export interface ProjectSpec {
   content: { skills: string[]; commands: string[]; agents: string[]; mcp: string[] };
   vars: Record<string, unknown>;
+  // 4b-1: device-local project dotfiles. claudeMd = literal project-root CLAUDE.md.
+  dotfiles: { claudeMd: string };
 }
 
 export interface Project {

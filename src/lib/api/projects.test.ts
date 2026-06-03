@@ -12,13 +12,13 @@ describe("projectsApi", () => {
 
   it("save passes camelCase args including seedFromProfileId", async () => {
     invokeMock.mockResolvedValue({ id: "p1" });
-    await projectsApi.save(null, "claude", "/abs/repo", "Repo", { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {} }, "local:claude:Src");
+    await projectsApi.save(null, "claude", "/abs/repo", "Repo", { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "" } }, "local:claude:Src");
     expect(invokeMock).toHaveBeenCalledWith("project_save", {
       id: null,
       app: "claude",
       enteredPath: "/abs/repo",
       name: "Repo",
-      spec: { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {} },
+      spec: { content: { skills: [], commands: [], agents: [], mcp: [] }, vars: {}, dotfiles: { claudeMd: "" } },
       seedFromProfileId: "local:claude:Src",
     });
   });

@@ -2805,6 +2805,9 @@
     "commandsPlaceholder": "e.g. my-command, @backend (comma-separated)",
     "agents": "Agents",
     "agentsPlaceholder": "e.g. my-agent, @backend (comma-separated)",
+    "claudeMd": "Project CLAUDE.md (additive memory)",
+    "claudeMdPlaceholder": "# Project rules\nLiteral text — no ${VAR} rendering.",
+    "claudeMdHint": "Materialized to <project>/CLAUDE.md (project root). Claude Code reads it ADDITIVELY with your global ~/.claude/CLAUDE.md — it augments, not replaces.",
     "appliedFiles": "Applied Files",
     "cancel": "Cancel",
     "save": "Save"
