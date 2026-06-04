@@ -26,7 +26,6 @@ use crate::store::AppState;
 /// (Self::row) and the reader (teardown_manifest_row) so a typo can't desync
 /// the two sites.
 const KIND_SETTINGS_MERGE: &str = "settings_merge";
-#[allow(dead_code)] // used by T5 (mcp_merge teardown arm, 4b-3)
 const KIND_MCP_MERGE: &str = "mcp_merge";
 
 /// Result of a project apply/detach: non-fatal warnings (mirrors ActivateResult).
