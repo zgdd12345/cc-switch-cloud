@@ -2750,6 +2750,8 @@
     "commandsPlaceholder": "例如 my-command, @backend（逗號分隔）",
     "agents": "子代理",
     "agentsPlaceholder": "例如 my-agent, @backend（逗號分隔）",
+    "mcp": "MCP 伺服器",
+    "mcpPlaceholder": "例如：my-mcp-server, @backend（逗號分隔）",
     "claudeMd": "專案 CLAUDE.md（疊加記憶）",
     "claudeMdPlaceholder": "# 專案規則\n純文字字面值——不做 ${VAR} 渲染。",
     "claudeMdHint": "寫入 <專案>/CLAUDE.md（專案根目錄）。Claude Code 會與全域 ~/.claude/CLAUDE.md 疊加讀取——是補充而非取代。",
