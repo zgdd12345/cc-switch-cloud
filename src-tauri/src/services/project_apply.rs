@@ -85,37 +85,12 @@ impl ProjectApplyService {
             ));
         }
         // owned-delete OUR previous rows' targets, then clear OUR rows (idempotent re-apply).
+        // For a settings_merge row, teardown_manifest_row runs reverse_merge HERE —
+        // contract (d) pre-reapply ordering: it undoes our prior merge BEFORE the
+        // materialize block (after the CLAUDE.md block, below) re-reads disk and
+        // re-merges, so our prior write never becomes the new "user baseline".
         for r in &ours {
-            if r.kind == "skill" {
-                // dir-aware, content-hash-safe removal so re-apply cleans old skill copies.
-                if let Some(parent) = Path::new(&r.target_path).parent() {
-                    let dir_name = Path::new(&r.target_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    crate::services::SkillService::remove_from_project_dir(&dir_name, parent, &app)
-                        .map_err(|e| {
-                            AppError::Message(format!("project skill remove failed: {e}"))
-                        })?;
-                }
-            } else if r.kind == "settings_merge" {
-                // CRITICAL (contract c): never let a merge row hit the else
-                // (remove_whole_file_if_owned → whole-file delete of the user's
-                // settings.json). This reverse IS the contract-(d) pre-reapply
-                // ordering: undo our prior merge BEFORE the materialize block (after
-                // the CLAUDE.md block, below) re-reads disk + re-merges, so our prior
-                // write never becomes the new "user baseline".
-                crate::services::settings_merge::reverse_merge(
-                    std::path::Path::new(&r.target_path),
-                    r.owned_keys.as_deref(),
-                    &mut result.warnings,
-                )?;
-            } else {
-                crate::services::profile_render::remove_whole_file_if_owned(
-                    &r.target_path,
-                    r.content_hash.as_deref(),
-                )?;
-            }
+            Self::teardown_manifest_row(r, &app, &mut result.warnings)?;
         }
         let our_ids: Vec<i64> = ours.iter().map(|r| r.id).collect();
         state.db.delete_manifest_entries(&our_ids)?;
@@ -300,10 +275,11 @@ impl ProjectApplyService {
                         crate::services::settings_merge::merge_with_snapshot(
                             &mut user, &frag, &mut path, &mut owned,
                         );
-                        let bytes = serde_json::to_vec_pretty(
-                            &crate::services::settings_merge::sort_json_keys_value(&user),
-                        )
-                        .map_err(|e| AppError::Message(format!("serialize settings.json: {e}")))?;
+                        let bytes =
+                            serde_json::to_vec_pretty(&crate::config::sort_json_keys(&user))
+                                .map_err(|e| {
+                                    AppError::Message(format!("serialize settings.json: {e}"))
+                                })?;
                         atomic_write(&target, &bytes)?;
                         let env = crate::services::settings_merge::OwnedKeysEnvelope {
                             v: crate::services::settings_merge::OWNED_KEYS_VERSION,
@@ -352,34 +328,7 @@ impl ProjectApplyService {
                 ));
                 continue;
             }
-            // owned-delete: only if on-disk hash == recorded hash.
-            if r.kind == "skill" {
-                // dir-aware, content-hash-safe removal (never remove_dir_all a real user dir)
-                if let Some(parent) = Path::new(&r.target_path).parent() {
-                    let dir_name = Path::new(&r.target_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    crate::services::SkillService::remove_from_project_dir(&dir_name, parent, &app)
-                        .map_err(|e| {
-                            AppError::Message(format!("project skill remove failed: {e}"))
-                        })?;
-                }
-            } else if r.kind == "settings_merge" {
-                // CRITICAL (contract c): a merge row MUST NOT hit the else
-                // (remove_whole_file_if_owned would attempt a whole-file delete of
-                // the user's settings.json). Reverse our recorded leaves instead.
-                crate::services::settings_merge::reverse_merge(
-                    std::path::Path::new(&r.target_path),
-                    r.owned_keys.as_deref(),
-                    &mut result.warnings,
-                )?;
-            } else {
-                crate::services::profile_render::remove_whole_file_if_owned(
-                    &r.target_path,
-                    r.content_hash.as_deref(),
-                )?;
-            }
+            Self::teardown_manifest_row(r, &app, &mut result.warnings)?;
         }
         // clear only OUR rows; leave foreign rows intact.
         let our_ids: Vec<i64> = rows
@@ -389,6 +338,48 @@ impl ProjectApplyService {
             .collect();
         state.db.delete_manifest_entries(&our_ids)?;
         Ok(result)
+    }
+
+    /// Tear down ONE owned project-channel manifest row. Shared by apply()'s
+    /// pre-delete sweep and detach() so the dispatch lives in exactly one place.
+    /// Dispatch by kind:
+    /// - `skill` → dir-aware, content-hash-safe removal (never `remove_dir_all` a real user dir).
+    /// - `settings_merge` → per-leaf `reverse_merge` (restores/removes only OUR leaves).
+    /// - else (`command`/`agent`/`project_memory`/`whole_file`) → hash-gated `remove_whole_file_if_owned`.
+    ///
+    /// CRITICAL (contract c): the `settings_merge` arm MUST stay before the `else`,
+    /// otherwise a merge row would reach `remove_whole_file_if_owned` and whole-file
+    /// delete the user's `settings.json`. Keeping the dispatch in one fn single-sources
+    /// that invariant (e.g. 4b-3 adds an `mcp_merge` arm here, not in two loops).
+    /// The caller owns the foreign-`project_id` guard (apply partitions upstream;
+    /// detach `continue`s before calling this).
+    fn teardown_manifest_row(
+        r: &ManifestEntry,
+        app: &AppType,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), AppError> {
+        if r.kind == "skill" {
+            if let Some(parent) = Path::new(&r.target_path).parent() {
+                let dir_name = Path::new(&r.target_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                crate::services::SkillService::remove_from_project_dir(&dir_name, parent, app)
+                    .map_err(|e| AppError::Message(format!("project skill remove failed: {e}")))?;
+            }
+        } else if r.kind == "settings_merge" {
+            crate::services::settings_merge::reverse_merge(
+                std::path::Path::new(&r.target_path),
+                r.owned_keys.as_deref(),
+                warnings,
+            )?;
+        } else {
+            crate::services::profile_render::remove_whole_file_if_owned(
+                &r.target_path,
+                r.content_hash.as_deref(),
+            )?;
+        }
+        Ok(())
     }
 
     fn row(

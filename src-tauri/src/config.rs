@@ -144,7 +144,7 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
 }
 
 /// 递归排序 JSON 对象的键（按字母顺序），确保序列化输出是确定性的
-fn sort_json_keys(value: &Value) -> Value {
+pub(crate) fn sort_json_keys(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut sorted_map = Map::new();

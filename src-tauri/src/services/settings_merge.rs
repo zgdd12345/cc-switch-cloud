@@ -121,7 +121,7 @@ pub fn reverse_merge(
     if text.trim().is_empty() {
         return Ok(());
     }
-    let env: OwnedKeysEnvelope = match serde_json::from_str(text) {
+    let mut env: OwnedKeysEnvelope = match serde_json::from_str(text) {
         Ok(e) => e,
         Err(e) => {
             warnings.push(format!(
@@ -152,9 +152,8 @@ pub fn reverse_merge(
     };
     // Independent leaves; order is irrelevant for correctness now that collapse is
     // removed, but process deepest-first for determinism.
-    let mut keys = env.keys.clone();
-    keys.sort_by_key(|k| std::cmp::Reverse(k.path.len()));
-    for k in &keys {
+    env.keys.sort_by_key(|k| std::cmp::Reverse(k.path.len()));
+    for k in &env.keys {
         if k.path.is_empty() {
             apply_root_leaf(&mut root, k);
             continue;
@@ -184,7 +183,7 @@ pub fn reverse_merge(
         }
     }
     // NO collapse_empty_created_ancestors (removed per adversarial fix #1).
-    let bytes = serde_json::to_vec_pretty(&sort_json_keys_value(&root))
+    let bytes = serde_json::to_vec_pretty(&crate::config::sort_json_keys(&root))
         .map_err(|e| AppError::Message(format!("serialize settings.json: {e}")))?;
     crate::config::atomic_write(file_path, &bytes)?;
     Ok(())
@@ -206,25 +205,6 @@ fn apply_root_leaf(root: &mut Value, k: &OwnedKey) {
             (true, Some(v)) => *root = v.clone(),
             _ => *root = Value::Object(serde_json::Map::new()),
         }
-    }
-}
-
-/// Deterministic key-sorted clone of a JSON value (config.rs's `sort_json_keys`
-/// is a private free fn; this mirrors its recursion shape locally).
-#[allow(dead_code)] // used by reverse_merge (wired in a later task)
-pub fn sort_json_keys_value(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut sorted = serde_json::Map::new();
-            let mut keys: Vec<_> = map.keys().collect();
-            keys.sort();
-            for key in keys {
-                sorted.insert(key.clone(), sort_json_keys_value(&map[key]));
-            }
-            Value::Object(sorted)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(sort_json_keys_value).collect()),
-        other => other.clone(),
     }
 }
 
@@ -544,15 +524,5 @@ mod tests {
             "byte-identical"
         );
         assert!(w.iter().any(|m| m.contains("not valid JSON")));
-    }
-
-    #[test]
-    fn sort_json_keys_value_sorts_recursively() {
-        let v = json!({"b": 1, "a": {"z": 2, "y": 3}});
-        let sorted = super::sort_json_keys_value(&v);
-        assert_eq!(
-            serde_json::to_string(&sorted).unwrap(),
-            r#"{"a":{"y":3,"z":2},"b":1}"#
-        );
     }
 }

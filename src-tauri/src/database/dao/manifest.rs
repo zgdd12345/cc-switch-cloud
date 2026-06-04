@@ -61,47 +61,24 @@ impl Database {
 
         let rows = stmt
             .query_map([profile_id, app_type], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, i64>(9)?,
-                ))
+                Ok(ManifestEntry {
+                    id: row.get(0)?,
+                    channel: row.get(1)?,
+                    profile_id: row.get(2)?,
+                    project_id: row.get(3)?,
+                    app_type: row.get(4)?,
+                    target_path: row.get(5)?,
+                    kind: row.get(6)?,
+                    content_hash: row.get(7)?,
+                    owned_keys: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut entries = Vec::new();
         for row_res in rows {
-            let (
-                id,
-                channel,
-                p_id,
-                proj_id,
-                a_type,
-                target_path,
-                kind,
-                content_hash,
-                owned_keys,
-                created_at,
-            ) = row_res.map_err(|e| AppError::Database(e.to_string()))?;
-            entries.push(ManifestEntry {
-                id,
-                channel,
-                profile_id: p_id,
-                project_id: proj_id,
-                app_type: a_type,
-                target_path,
-                kind,
-                content_hash,
-                owned_keys,
-                created_at,
-            });
+            entries.push(row_res.map_err(|e| AppError::Database(e.to_string()))?);
         }
         Ok(entries)
     }
