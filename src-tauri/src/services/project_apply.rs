@@ -436,13 +436,14 @@ impl ProjectApplyService {
     /// pre-delete sweep and detach() so the dispatch lives in exactly one place.
     /// Dispatch by kind:
     /// - `skill` → dir-aware, content-hash-safe removal (never `remove_dir_all` a real user dir).
-    /// - `settings_merge` → per-leaf `reverse_merge` (restores/removes only OUR leaves).
+    /// - `settings_merge` / `mcp_merge` → per-leaf `reverse_merge` (restores/removes only OUR leaves).
     /// - else (`command`/`agent`/`project_memory`/`whole_file`) → hash-gated `remove_whole_file_if_owned`.
     ///
-    /// CRITICAL (contract c): the `settings_merge` arm MUST stay before the `else`,
-    /// otherwise a merge row would reach `remove_whole_file_if_owned` and whole-file
-    /// delete the user's `settings.json`. Keeping the dispatch in one fn single-sources
-    /// that invariant (e.g. 4b-3 adds an `mcp_merge` arm here, not in two loops).
+    /// CRITICAL (contract c): the `settings_merge`/`mcp_merge` arm MUST stay before
+    /// the `else`, otherwise a merge row would reach `remove_whole_file_if_owned` and
+    /// whole-file delete the user's `settings.json`/`.mcp.json`. Keeping the dispatch
+    /// in one fn single-sources that invariant: the `settings_merge` (4b-2) and
+    /// `mcp_merge` (4b-3) kinds SHARE one arm here, not two loops.
     /// The caller owns the foreign-`project_id` guard (apply partitions upstream;
     /// detach `continue`s before calling this).
     fn teardown_manifest_row(
@@ -459,7 +460,12 @@ impl ProjectApplyService {
                 crate::services::SkillService::remove_from_project_dir(&dir_name, parent, app)
                     .map_err(|e| AppError::Message(format!("project skill remove failed: {e}")))?;
             }
-        } else if r.kind == KIND_SETTINGS_MERGE {
+        } else if r.kind == KIND_SETTINGS_MERGE || r.kind == KIND_MCP_MERGE {
+            // settings_merge (4b-2) + mcp_merge (4b-3): per-leaf reverse_merge
+            // restores/removes ONLY the leaves we wrote, preserving user-authored
+            // keys. Same fail-closed engine; only the kind discriminant differs.
+            // CRITICAL: this MUST precede the catch-all else — a merge row in the
+            // else would whole-file delete the user's settings.json/.mcp.json.
             crate::services::settings_merge::reverse_merge(
                 std::path::Path::new(&r.target_path),
                 r.owned_keys.as_deref(),
@@ -2138,5 +2144,208 @@ mod tests {
             .filter(|r| r.kind == "mcp_merge")
             .count();
         assert_eq!(count, 1, "re-apply stays idempotent (one mcp_merge row)");
+    }
+
+    #[test]
+    #[serial]
+    fn detach_removes_our_servers_preserves_user_servers_and_other_keys() {
+        // Matrix #2 + #5 (whole-file-delete regression): user server + other top
+        // key pre-exist; apply [A]; detach → user-x + otherTop survive, A gone,
+        // FILE NOT whole-file-deleted (mcp_merge routes to reverse_merge).
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        seed_mcp(
+            &db,
+            "srv-a",
+            serde_json::json!({"type":"stdio","command":"a"}),
+            vec![],
+        );
+        let (proj, canon) = project_at(
+            home.home(),
+            "mcp-detach",
+            ProfileContent {
+                skills: vec![],
+                commands: vec![],
+                agents: vec![],
+                mcp: vec!["srv-a".into()],
+            },
+        );
+        db.save_project(&proj).expect("save");
+
+        // user already has a .mcp.json with their OWN server + an unrelated top key.
+        let target = canon.join(".mcp.json");
+        std::fs::write(
+            &target,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "mcpServers": { "user-x": { "type": "stdio", "command": "u" } },
+                "otherTop": 1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        // after apply: both servers present, otherTop intact.
+        let merged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert!(merged["mcpServers"].get("srv-a").is_some(), "ours added");
+        assert!(
+            merged["mcpServers"].get("user-x").is_some(),
+            "user server kept on apply"
+        );
+
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(
+            target.exists(),
+            "file survives detach (NOT whole-file-deleted)"
+        );
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert!(
+            after["mcpServers"].get("srv-a").is_none(),
+            "our server removed on detach"
+        );
+        assert_eq!(
+            after["mcpServers"]["user-x"],
+            serde_json::json!({"type":"stdio","command":"u"}),
+            "user server survives detach"
+        );
+        assert_eq!(
+            after["otherTop"],
+            serde_json::json!(1),
+            "other top key survives"
+        );
+
+        let chan = format!("project:{}", canon.to_string_lossy());
+        assert_eq!(
+            db.get_manifest_for_channel(&chan).unwrap().len(),
+            0,
+            "rows cleared"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn mcp_merge_row_routes_to_reverse_merge_not_whole_file_delete() {
+        // Matrix #5 (explicit regression): a synthetic content_hash=None mcp_merge
+        // row whose owned_keys removes nothing → teardown must call reverse_merge,
+        // never remove_whole_file_if_owned → file SURVIVES.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        let (proj, canon) = project_at(home.home(), "mcp-regress", ProfileContent::default());
+        db.save_project(&proj).expect("save");
+
+        let target = canon.join(".mcp.json");
+        std::fs::write(&target, br#"{"mcpServers":{"user-x":{"command":"u"}}}"#).unwrap();
+        let chan = format!("project:{}", canon.to_string_lossy());
+        // an owned_keys envelope that owns NOTHING currently on disk (wrote a leaf
+        // the user later changed) → reverse_merge leaves the file intact.
+        let env = serde_json::to_string(&crate::services::settings_merge::OwnedKeysEnvelope {
+            v: crate::services::settings_merge::OWNED_KEYS_VERSION,
+            keys: vec![crate::services::settings_merge::OwnedKey {
+                path: vec!["mcpServers".into(), "ghost".into()],
+                prior: crate::services::settings_merge::PriorLeaf {
+                    present: false,
+                    value: None,
+                },
+                wrote: serde_json::json!({"command":"never-on-disk"}),
+            }],
+        })
+        .unwrap();
+        db.record_manifest_entry(&ManifestEntry {
+            id: 0,
+            channel: chan.clone(),
+            profile_id: None,
+            project_id: Some(proj.id.clone()),
+            app_type: "claude".into(),
+            target_path: target.to_string_lossy().to_string(),
+            kind: "mcp_merge".into(),
+            content_hash: None,
+            owned_keys: Some(env),
+            created_at: 0,
+        })
+        .unwrap();
+
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        assert!(
+            target.exists(),
+            "mcp_merge row must NOT whole-file-delete the file"
+        );
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            after["mcpServers"]["user-x"],
+            serde_json::json!({"command":"u"}),
+            "user server fully intact (reverse_merge, not whole-file delete)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn detach_user_field_inside_our_server_survives() {
+        // Matrix #10 (per-field): pre-seed mcpServers.A={command,userField}; apply
+        // frag A={command,args}; detach → pin to the engine's exact per-leaf result.
+        // merge_with_snapshot recurses A (both objects): writes [A,args] (absent)
+        // and overwrites [A,command] (prior "u"→"a"); userField is NOT in our frag
+        // so it is untouched. reverse_merge removes [A,args], restores [A,command]
+        // to "u"; userField survives → A = {"command":"u","userField":true}.
+        let home = TempHome::new();
+        crate::settings::reload_settings().ok();
+        let db = Arc::new(Database::memory().expect("db"));
+        let state = AppState::new(db.clone());
+        seed_mcp(
+            &db,
+            "srv-a",
+            serde_json::json!({"type":"stdio","command":"a","args":["x"]}),
+            vec![],
+        );
+        let (proj, canon) = project_at(
+            home.home(),
+            "mcp-perfield",
+            ProfileContent {
+                skills: vec![],
+                commands: vec![],
+                agents: vec![],
+                mcp: vec!["srv-a".into()],
+            },
+        );
+        db.save_project(&proj).expect("save");
+
+        let target = canon.join(".mcp.json");
+        std::fs::write(
+            &target,
+            br#"{"mcpServers":{"srv-a":{"command":"u","userField":true}}}"#,
+        )
+        .unwrap();
+
+        ProjectApplyService::apply(&state, &proj.id).expect("apply");
+        let merged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        // our frag overwrote command + added args + type; userField untouched.
+        assert_eq!(
+            merged["mcpServers"]["srv-a"]["command"],
+            serde_json::json!("a")
+        );
+        assert_eq!(
+            merged["mcpServers"]["srv-a"]["args"],
+            serde_json::json!(["x"])
+        );
+        assert_eq!(
+            merged["mcpServers"]["srv-a"]["userField"],
+            serde_json::json!(true)
+        );
+
+        ProjectApplyService::detach(&state, &proj.id).expect("detach");
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(
+            after["mcpServers"]["srv-a"],
+            serde_json::json!({"command":"u","userField":true}),
+            "per-leaf reverse: command restored, args/type removed, userField survives"
+        );
     }
 }
