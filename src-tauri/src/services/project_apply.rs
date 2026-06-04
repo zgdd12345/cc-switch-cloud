@@ -260,50 +260,16 @@ impl ProjectApplyService {
                     // sentinel; NOT Value::Null — a valid on-disk `null` must not be
                     // misclassified, adversarial fix #3). absent file → Some({});
                     // present+valid → Some(v); present+invalid → None + warn.
-                    let user_opt: Option<serde_json::Value> = if target.exists() {
-                        match std::fs::read(&target)
-                            .ok()
-                            .and_then(|b| serde_json::from_slice(&b).ok())
-                        {
-                            Some(v) => Some(v),
-                            None => {
-                                result.warnings.push(format!(
-                                    "project settings.json on disk is not a JSON value; skipping merge: {}",
-                                    target.display()
-                                ));
-                                None
-                            }
-                        }
-                    } else {
-                        Some(serde_json::Value::Object(serde_json::Map::new()))
-                    };
-                    if let Some(mut user) = user_opt {
-                        let mut owned = Vec::new();
-                        let mut path = Vec::new();
-                        crate::services::settings_merge::merge_with_snapshot(
-                            &mut user, &frag, &mut path, &mut owned,
-                        );
-                        let bytes =
-                            serde_json::to_vec_pretty(&crate::config::sort_json_keys(&user))
-                                .map_err(|e| {
-                                    AppError::Message(format!("serialize settings.json: {e}"))
-                                })?;
-                        atomic_write(&target, &bytes)?;
-                        let env = crate::services::settings_merge::OwnedKeysEnvelope {
-                            v: crate::services::settings_merge::OWNED_KEYS_VERSION,
-                            keys: owned,
-                        };
-                        let owned_json = serde_json::to_string(&env)
-                            .map_err(|e| AppError::Message(format!("serialize owned_keys: {e}")))?;
-                        state.db.record_manifest_entry(&Self::row(
-                            &channel,
-                            &project.id,
-                            &target,
-                            KIND_SETTINGS_MERGE,
-                            None,
-                            Some(owned_json),
-                        ))?;
-                    }
+                    Self::merge_and_record(
+                        &state.db,
+                        &channel,
+                        &project.id,
+                        &target,
+                        &frag,
+                        KIND_SETTINGS_MERGE,
+                        "settings.json",
+                        &mut result.warnings,
+                    )?;
                 }
                 Err(e) => result.warnings.push(format!(
                     "project settings.json fragment invalid JSON after render, skipping: {e}"
@@ -349,48 +315,16 @@ impl ProjectApplyService {
             if !mcp_map.is_empty() {
                 let target = base.mcp_file();
                 let frag = serde_json::json!({ "mcpServers": serde_json::Value::Object(mcp_map) });
-                // Option<Value> sentinel (None == skip), NOT Value::Null — mirror settings_merge.
-                let user_opt: Option<serde_json::Value> = if target.exists() {
-                    match std::fs::read(&target)
-                        .ok()
-                        .and_then(|b| serde_json::from_slice(&b).ok())
-                    {
-                        Some(v) => Some(v),
-                        None => {
-                            result.warnings.push(format!(
-                                "project .mcp.json on disk is not a JSON value; skipping merge: {}",
-                                target.display()
-                            ));
-                            None
-                        }
-                    }
-                } else {
-                    Some(serde_json::Value::Object(serde_json::Map::new()))
-                };
-                if let Some(mut user) = user_opt {
-                    let mut owned = Vec::new();
-                    let mut path = Vec::new();
-                    crate::services::settings_merge::merge_with_snapshot(
-                        &mut user, &frag, &mut path, &mut owned,
-                    );
-                    let bytes = serde_json::to_vec_pretty(&crate::config::sort_json_keys(&user))
-                        .map_err(|e| AppError::Message(format!("serialize .mcp.json: {e}")))?;
-                    atomic_write(&target, &bytes)?;
-                    let env = crate::services::settings_merge::OwnedKeysEnvelope {
-                        v: crate::services::settings_merge::OWNED_KEYS_VERSION,
-                        keys: owned,
-                    };
-                    let owned_json = serde_json::to_string(&env)
-                        .map_err(|e| AppError::Message(format!("serialize owned_keys: {e}")))?;
-                    state.db.record_manifest_entry(&Self::row(
-                        &channel,
-                        &project.id,
-                        &target,
-                        KIND_MCP_MERGE,
-                        None,
-                        Some(owned_json),
-                    ))?;
-                }
+                Self::merge_and_record(
+                    &state.db,
+                    &channel,
+                    &project.id,
+                    &target,
+                    &frag,
+                    KIND_MCP_MERGE,
+                    ".mcp.json",
+                    &mut result.warnings,
+                )?;
             }
         }
 
@@ -475,6 +409,74 @@ impl ProjectApplyService {
                 &r.target_path,
                 r.content_hash.as_deref(),
             )?;
+        }
+        Ok(())
+    }
+
+    /// Shared "read-baseline → merge → write → record" spine used by both the
+    /// `settings_merge` (4b-2) and `mcp_merge` (4b-3) materialize blocks.
+    ///
+    /// Contract (mirrors both callers):
+    /// - `target` absent → baseline = `{}`.
+    /// - `target` present+valid JSON → baseline = that value.
+    /// - `target` present+invalid JSON → push a warning with `file_label` in the
+    ///   message and return `Ok(())` (skip-sentinel; NO write, NO row).
+    /// - On success: forward-merges `frag` into the baseline, atomic-writes the
+    ///   sorted result, and records a single `kind` row carrying the owned-keys
+    ///   envelope (content_hash = None, as merge rows do not carry a whole-file hash).
+    #[allow(clippy::too_many_arguments)]
+    fn merge_and_record(
+        db: &crate::database::Database,
+        channel: &str,
+        project_id: &str,
+        target: &std::path::Path,
+        frag: &serde_json::Value,
+        kind: &str,
+        file_label: &str,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), AppError> {
+        // Option<Value> sentinel (None == skip), NOT Value::Null — a valid on-disk
+        // `null` must not be misclassified (adversarial fix #3).
+        let user_opt: Option<serde_json::Value> = if target.exists() {
+            match std::fs::read(target)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+            {
+                Some(v) => Some(v),
+                None => {
+                    warnings.push(format!(
+                        "project {file_label} on disk is not a JSON value; skipping merge: {}",
+                        target.display()
+                    ));
+                    return Ok(());
+                }
+            }
+        } else {
+            Some(serde_json::Value::Object(serde_json::Map::new()))
+        };
+        if let Some(mut user) = user_opt {
+            let mut owned = Vec::new();
+            let mut path = Vec::new();
+            crate::services::settings_merge::merge_with_snapshot(
+                &mut user, frag, &mut path, &mut owned,
+            );
+            let bytes = serde_json::to_vec_pretty(&crate::config::sort_json_keys(&user))
+                .map_err(|e| AppError::Message(format!("serialize {file_label}: {e}")))?;
+            atomic_write(target, &bytes)?;
+            let env = crate::services::settings_merge::OwnedKeysEnvelope {
+                v: crate::services::settings_merge::OWNED_KEYS_VERSION,
+                keys: owned,
+            };
+            let owned_json = serde_json::to_string(&env)
+                .map_err(|e| AppError::Message(format!("serialize owned_keys: {e}")))?;
+            db.record_manifest_entry(&Self::row(
+                channel,
+                project_id,
+                target,
+                kind,
+                None,
+                Some(owned_json),
+            ))?;
         }
         Ok(())
     }
