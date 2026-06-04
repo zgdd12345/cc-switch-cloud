@@ -391,6 +391,33 @@ impl ProjectApplyService {
         Ok(())
     }
 
+    /// Strip UI/metadata fields from an MCP server spec before writing it to a project
+    /// .mcp.json. Mirrors claude_mcp.rs::set_mcp_servers_map's inline 8-field strip,
+    /// minus Windows cmd/c wrapping (omitted for cross-machine repo .mcp.json).
+    fn strip_mcp_ui_fields(spec: &mut serde_json::Value) {
+        if let Some(obj) = spec.as_object_mut() {
+            if let Some(inner) = obj.remove("server") {
+                if inner.is_object() {
+                    *spec = inner;
+                }
+            }
+        }
+        if let Some(obj) = spec.as_object_mut() {
+            for k in [
+                "enabled",
+                "source",
+                "id",
+                "name",
+                "description",
+                "tags",
+                "homepage",
+                "docs",
+            ] {
+                obj.remove(k);
+            }
+        }
+    }
+
     fn row(
         channel: &str,
         project_id: &str,
@@ -1621,6 +1648,90 @@ mod tests {
             db.get_manifest_for_channel(&chan).unwrap().len(),
             0,
             "rows cleared on detach"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_ui_fields_drops_all_eight_and_keeps_connection() {
+        let mut spec = serde_json::json!({
+            "type": "stdio",
+            "command": "node",
+            "args": ["server.js"],
+            "env": { "K": "v" },
+            "enabled": true,
+            "source": "registry",
+            "id": "srv1",
+            "name": "Server One",
+            "description": "desc",
+            "tags": ["a", "b"],
+            "homepage": "https://h",
+            "docs": "https://d"
+        });
+        ProjectApplyService::strip_mcp_ui_fields(&mut spec);
+        assert_eq!(
+            spec,
+            serde_json::json!({
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"],
+                "env": { "K": "v" }
+            }),
+            "only the connection fields survive"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_ui_fields_noop_on_clean_stdio_spec() {
+        let mut spec = serde_json::json!({
+            "type": "stdio", "command": "uvx", "args": ["x"]
+        });
+        let before = spec.clone();
+        ProjectApplyService::strip_mcp_ui_fields(&mut spec);
+        assert_eq!(spec, before, "already-clean spec is unchanged");
+    }
+
+    #[test]
+    fn strip_mcp_ui_fields_keeps_http_url() {
+        let mut spec = serde_json::json!({
+            "type": "http", "url": "https://mcp.example/api", "name": "X", "enabled": true
+        });
+        ProjectApplyService::strip_mcp_ui_fields(&mut spec);
+        assert_eq!(
+            spec,
+            serde_json::json!({ "type": "http", "url": "https://mcp.example/api" }),
+            "http/sse url survives, UI fields stripped"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_ui_fields_unwraps_legacy_server_wrapper() {
+        // legacy {"server":{..real..}, "name":..} → unwrap to the inner spec, then strip.
+        let mut spec = serde_json::json!({
+            "name": "wrapped",
+            "enabled": true,
+            "server": { "type": "stdio", "command": "go", "args": ["run"] }
+        });
+        ProjectApplyService::strip_mcp_ui_fields(&mut spec);
+        assert_eq!(
+            spec,
+            serde_json::json!({ "type": "stdio", "command": "go", "args": ["run"] }),
+            "legacy server wrapper unwrapped and stripped"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_ui_fields_non_object_server_value_does_not_panic_or_lose_fields() {
+        // a `server` value that is NOT an object is removed (dropped, never
+        // reinserted, since we only reassign `*spec` when the unwrapped value
+        // is an object); the connection fields survive and there is no panic.
+        let mut spec = serde_json::json!({
+            "type": "stdio", "command": "x", "server": "not-an-object", "enabled": true
+        });
+        ProjectApplyService::strip_mcp_ui_fields(&mut spec);
+        assert_eq!(
+            spec,
+            serde_json::json!({ "type": "stdio", "command": "x" }),
+            "non-object `server` is removed (dropped, never reinserted); connection fields survive, no panic"
         );
     }
 }
