@@ -9,8 +9,8 @@ use std::sync::Arc;
 // Project/ProjectSpec/ProfileContent/InstalledCommand/ProjectApplyService/ProjectBase
 // re-exports; Database + AppState + AppType were already re-exported.
 use agenthub_lib::{
-    AppState, AppType, Database, InstalledCommand, OwnedKeysEnvelope, ProfileContent, Project,
-    ProjectApplyService, ProjectBase, ProjectSpec,
+    AppState, AppType, Database, InstalledCommand, McpApps, McpServer, OwnedKeysEnvelope,
+    ProfileContent, Project, ProjectApplyService, ProjectBase, ProjectSpec,
 };
 use serial_test::serial;
 use tempfile::TempDir;
@@ -207,4 +207,99 @@ fn e2e_settings_merge_apply_then_detach_preserves_user_keys() {
         0,
         "rows cleared"
     );
+}
+
+#[test]
+#[serial]
+fn e2e_mcp_merge_apply_then_detach_preserves_user_servers() {
+    let home = TempHome::new();
+    let db = Arc::new(Database::memory().expect("db"));
+    let state = AppState::new(db.clone());
+
+    // a server in the catalog, selected by the project's content.mcp.
+    db.save_mcp_server(&McpServer {
+        id: "e2e-srv".into(),
+        name: "E2E Server".into(),
+        server: serde_json::json!({"type":"stdio","command":"node","args":["s.js"],"enabled":true}),
+        apps: McpApps::default(),
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    })
+    .unwrap();
+
+    let root = home.dir.path().join("e2e-mcp");
+    std::fs::create_dir_all(&root).unwrap();
+    let canon = root.canonicalize().unwrap();
+    // user pre-existing .mcp.json with their OWN server + a sibling top key.
+    let target = canon.join(".mcp.json");
+    std::fs::write(
+        &target,
+        br#"{"mcpServers":{"user-srv":{"type":"stdio","command":"u"}},"keep":42}"#,
+    )
+    .unwrap();
+
+    let mut spec = ProjectSpec::default();
+    spec.content.mcp = vec!["e2e-srv".into()];
+    let proj = Project {
+        id: "proj:e2e-mcp".into(),
+        project_path: canon.to_string_lossy().to_string(),
+        entered_path: root.to_string_lossy().to_string(),
+        app_type: "claude".into(),
+        name: Some("E2E MCP".into()),
+        spec,
+        enabled: true,
+        created_at: 1,
+        updated_at: 1,
+    };
+    db.save_project(&proj).unwrap();
+
+    // apply: our server merged + stripped, ROOT .mcp.json, envelope v=1 row.
+    ProjectApplyService::apply(&state, &proj.id).expect("apply");
+    assert!(
+        !canon.join(".claude").join(".mcp.json").exists(),
+        "never under .claude/"
+    );
+    let merged: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+    assert_eq!(
+        merged["mcpServers"]["e2e-srv"],
+        serde_json::json!({"type":"stdio","command":"node","args":["s.js"]}),
+        "our server merged + stripped (enabled gone)"
+    );
+    assert!(
+        merged["mcpServers"].get("user-srv").is_some(),
+        "user server kept"
+    );
+    assert_eq!(merged["keep"], serde_json::json!(42), "sibling key kept");
+
+    let chan = format!("project:{}", canon.to_string_lossy());
+    let rows = db.get_manifest_for_channel(&chan).unwrap();
+    let env: OwnedKeysEnvelope = serde_json::from_str(
+        rows.iter()
+            .find(|r| r.kind == "mcp_merge")
+            .unwrap()
+            .owned_keys
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(env.v, 1);
+
+    // detach: our server reversed; user server + sibling key survive; file stays.
+    ProjectApplyService::detach(&state, &proj.id).expect("detach");
+    assert!(target.exists(), ".mcp.json survives detach");
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+    assert!(
+        after["mcpServers"].get("e2e-srv").is_none(),
+        "our server removed"
+    );
+    assert_eq!(
+        after["mcpServers"]["user-srv"],
+        serde_json::json!({"type":"stdio","command":"u"}),
+        "user server survives detach"
+    );
+    assert_eq!(after["keep"], serde_json::json!(42), "sibling key survives");
 }

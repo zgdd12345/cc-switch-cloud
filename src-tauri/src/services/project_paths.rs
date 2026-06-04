@@ -51,9 +51,18 @@ impl ProjectBase {
     /// Project settings file for Claude (4b-2: <root>/.claude/settings.json).
     /// UNDER dotdir() — Claude Code reads project-local settings.json (merged
     /// with ~/.claude/settings.json by Claude itself). NOT app-parameterized in
-    /// v1: settings.json is a Claude-only kind (`.mcp.json` lands in 4b-3).
+    /// v1: settings.json is a Claude-only kind (.mcp.json is the root-level mcp_file()).
     pub fn settings_file(&self) -> PathBuf {
         self.dotdir().join("settings.json")
+    }
+
+    /// Project-root MCP config file (4b-3: <root>/.mcp.json for Claude). ROOT level,
+    /// NOT under dotdir() — Claude reads the project-root .mcp.json (community
+    /// convention, mirrored by mcp/validation.rs). Project-scoped counterpart to the
+    /// home-global ~/.claude.json that config::get_claude_mcp_path() returns — 4b-3
+    /// must NOT use that fn.
+    pub fn mcp_file(&self) -> PathBuf {
+        self.root.join(".mcp.json")
     }
 
     /// Resolve + validate a user-entered project root for `app`.
@@ -418,6 +427,28 @@ mod tests {
             base.settings_file(),
             base.root().join("settings.json"),
             "settings_file must use dotdir(), not root()"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn mcp_file_is_root_level_not_under_dotdir() {
+        let home = TempHome::new();
+        let proj = home.home().join("work").join("mcprepo");
+        std::fs::create_dir_all(&proj).expect("mkdir proj");
+        let base = ProjectBase::resolve(proj.to_str().unwrap(), &AppType::Claude).expect("resolve");
+        // .mcp.json lives at the project ROOT, NOT under .claude/ (community
+        // convention; Claude reads project-root .mcp.json).
+        assert_eq!(base.mcp_file(), base.root().join(".mcp.json"));
+        assert_ne!(
+            base.mcp_file(),
+            base.settings_file(),
+            "mcp_file must be root-level, NOT the .claude/ settings path"
+        );
+        assert_ne!(
+            base.mcp_file(),
+            base.dotdir().join(".mcp.json"),
+            "regression guard: must NOT be .claude/.mcp.json"
         );
     }
 }

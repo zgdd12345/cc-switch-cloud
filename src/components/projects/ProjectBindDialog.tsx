@@ -29,6 +29,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
   const [skills, setSkills] = useState("");
   const [commands, setCommands] = useState("");
   const [agents, setAgents] = useState("");
+  const [mcp, setMcp] = useState("");
   const [claudeMd, setClaudeMd] = useState("");
   const [settings, setSettings] = useState("");
   const [seedId, setSeedId] = useState<string>("");
@@ -40,6 +41,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
     setSkills((project?.spec.content.skills ?? []).join(", "));
     setCommands((project?.spec.content.commands ?? []).join(", "));
     setAgents((project?.spec.content.agents ?? []).join(", "));
+    setMcp((project?.spec.content.mcp ?? []).join(", "));
     setClaudeMd(project?.spec.dotfiles?.claudeMd ?? "");
     setSettings(project?.spec.dotfiles?.settings ?? "");
     setSeedId("");
@@ -58,7 +60,7 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
         skills: splitList(skills),
         commands: splitList(commands),
         agents: splitList(agents),
-        mcp: [],
+        mcp: splitList(mcp),
       },
       vars: {},
       dotfiles: { claudeMd, settings },
@@ -112,6 +114,8 @@ export const ProjectBindDialog: React.FC<Props> = ({ open, project, currentApp, 
         <Input className="mt-1 mb-3" value={commands} onChange={(e) => setCommands(e.target.value)} placeholder={t("projects.commandsPlaceholder")} />
         <label className="text-sm font-medium">{t("projects.agents")}</label>
         <Input className="mt-1 mb-3" value={agents} onChange={(e) => setAgents(e.target.value)} placeholder={t("projects.agentsPlaceholder")} />
+        <label className="text-sm font-medium">{t("projects.mcp")}</label>
+        <Input className="mt-1 mb-3" value={mcp} onChange={(e) => setMcp(e.target.value)} placeholder={t("projects.mcpPlaceholder")} />
 
         <label className="text-sm font-medium">{t("projects.claudeMd")}</label>
         <p className="text-xs text-muted-foreground mt-1">{t("projects.claudeMdHint")}</p>
