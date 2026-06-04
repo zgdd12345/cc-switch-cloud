@@ -20,6 +20,15 @@ use crate::services::profile::ProfileService;
 use crate::services::project_paths::{content_file_path, ProjectBase};
 use crate::store::AppState;
 
+/// Single-source-of-truth names for the two MERGE manifest kinds (the
+/// kind→enum-DEFER mitigation, 4b-3). These NAME the existing DB-stored string
+/// literals; they do NOT change the stored values. Used by both the writer
+/// (Self::row) and the reader (teardown_manifest_row) so a typo can't desync
+/// the two sites.
+const KIND_SETTINGS_MERGE: &str = "settings_merge";
+#[allow(dead_code)] // used by T5 (mcp_merge teardown arm, 4b-3)
+const KIND_MCP_MERGE: &str = "mcp_merge";
+
 /// Result of a project apply/detach: non-fatal warnings (mirrors ActivateResult).
 ///
 /// `allow(dead_code)`: the apply/detach service surface is introduced here ahead
@@ -291,7 +300,7 @@ impl ProjectApplyService {
                             &channel,
                             &project.id,
                             &target,
-                            "settings_merge",
+                            KIND_SETTINGS_MERGE,
                             None,
                             Some(owned_json),
                         ))?;
@@ -367,7 +376,7 @@ impl ProjectApplyService {
                 crate::services::SkillService::remove_from_project_dir(&dir_name, parent, app)
                     .map_err(|e| AppError::Message(format!("project skill remove failed: {e}")))?;
             }
-        } else if r.kind == "settings_merge" {
+        } else if r.kind == KIND_SETTINGS_MERGE {
             crate::services::settings_merge::reverse_merge(
                 std::path::Path::new(&r.target_path),
                 r.owned_keys.as_deref(),
